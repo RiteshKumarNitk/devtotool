@@ -7,6 +7,7 @@ import '../storage/storage_page.dart';
 import '../device/device_page.dart';
 import '../performance/performance_page.dart';
 import '../dom/dom_page.dart';
+import '../downloads/downloads_home.dart';
 
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
@@ -26,6 +27,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     const DOMPage(),
     const DevicePage(),
     const PerformancePage(),
+    const DownloadsHome(),
   ];
 
   @override
@@ -70,6 +72,10 @@ class _HomePageState extends ConsumerState<HomePage> {
           BottomNavigationBarItem(
             icon: Icon(Icons.speed),
             label: 'Perf',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.download),
+            label: 'Downloads',
           ),
         ],
       ),
