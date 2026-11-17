@@ -1,4 +1,4 @@
-package com.example.debug_browser
+package com.innovatextechnology.debugbrowser
 
 import io.flutter.embedding.android.FlutterActivity
 

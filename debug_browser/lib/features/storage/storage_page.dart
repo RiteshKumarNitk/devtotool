@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/js_bridge.dart';
 import '../../core/providers.dart';
 
 class StoragePage extends ConsumerStatefulWidget {
@@ -193,13 +194,15 @@ class _StoragePageState extends ConsumerState<StoragePage> {
     );
   }
 
+  /// Whitelists the storage object name so it can't inject script.
+  String _storageObject(String type) =>
+      type == 'sessionStorage' ? 'sessionStorage' : 'localStorage';
+
   void _saveKey(String type, String key, String value) {
     final controller = ref.read(webViewControllerProvider);
     if (controller != null) {
-      final safeKey = key.replaceAll("'", "\\'");
-      final safeVal = value.replaceAll("'", "\\'");
       controller.runJavaScript("""
-        ${type}.setItem('${safeKey}', '${safeVal}');
+        ${_storageObject(type)}.setItem(${jsString(key)}, ${jsString(value)});
         window.DebugBridge.postMessage(JSON.stringify({
           type: 'storage', 
           data: {
@@ -215,9 +218,8 @@ class _StoragePageState extends ConsumerState<StoragePage> {
   void _deleteKey(String type, String key) {
     final controller = ref.read(webViewControllerProvider);
     if (controller != null) {
-      final safeKey = key.replaceAll("'", "\\'");
       controller.runJavaScript("""
-        ${type}.removeItem('${safeKey}');
+        ${_storageObject(type)}.removeItem(${jsString(key)});
         window.DebugBridge.postMessage(JSON.stringify({
           type: 'storage', 
           data: {

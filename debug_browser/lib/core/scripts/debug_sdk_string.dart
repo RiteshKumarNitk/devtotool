@@ -20,7 +20,7 @@ const String debugSdkJs = '''
 
     function hookConsole(method) {
         console[method] = function (...args) {
-            // originalConsole[method].apply(console, args);
+            try { originalConsole[method].apply(console, args); } catch (e) { }
             try {
                 const message = args.map(arg => {
                     if (typeof arg === 'object') {
@@ -62,51 +62,63 @@ const String debugSdkJs = '''
     // 3. Mock API Support
     window._apiMocks = {};
     window.updateApiMocks = function(mocksJson) {
-        window._apiMocks = JSON.parse(mocksJson);
+        try { window._apiMocks = JSON.parse(mocksJson) || {}; } catch (e) { window._apiMocks = {}; }
     };
+    function findMock(url) {
+        if (!url) return null;
+        for (const pattern in window._apiMocks) {
+            if (String(url).indexOf(pattern) !== -1) return window._apiMocks[pattern];
+        }
+        return null;
+    }
+    const MAX_BODY = 100 * 1024;
+    function clip(text) {
+        if (text == null) return null;
+        text = String(text);
+        return text.length > MAX_BODY ? text.substring(0, MAX_BODY) + '... [truncated]' : text;
+    }
+    function isTextual(contentType) {
+        if (!contentType) return true;
+        return /json|text|xml|javascript|html|x-www-form-urlencoded/i.test(contentType);
+    }
 
     // 4. Hook Network Requests (Fetch)
     const originalFetch = window.fetch;
-    window.fetch = async function() {
-        const url = typeof arguments[0] === 'string' ? arguments[0] : arguments[0].url;
-        
-        for (const pattern in window._apiMocks) {
-            if (url.includes(pattern)) {
-                console.warn('[Mocked Fetch] ' + url);
-                const mockBody = window._apiMocks[pattern];
-                sendToFlutter('network', { type: 'fetch', url: url, method: 'GET', status: 200, duration: 0, responseBody: mockBody });
-                return new Response(mockBody, { status: 200, statusText: 'OK' });
-            }
+    window.fetch = async function(input, init) {
+        const isRequest = typeof Request !== 'undefined' && input instanceof Request;
+        const url = isRequest ? input.url : String(input);
+        const method = ((init && init.method) || (isRequest ? input.method : 'GET') || 'GET').toUpperCase();
+        const requestBody = init && typeof init.body === 'string' ? clip(init.body) : null;
+
+        const mockBody = findMock(url);
+        if (mockBody !== null) {
+            console.warn('[Mocked Fetch] ' + method + ' ' + url);
+            sendToFlutter('network', { type: 'fetch', url: url, method: method, status: 200, duration: 0, requestBody: requestBody, responseBody: clip(mockBody) });
+            return new Response(mockBody, { status: 200, statusText: 'OK', headers: { 'Content-Type': 'application/json' } });
         }
 
         const startTime = Date.now();
         try {
             const response = await originalFetch.apply(this, arguments);
-            const clone = response.clone();
-            const text = await clone.text();
             const duration = Date.now() - startTime;
-            
-            let method = 'GET';
-            if (arguments[1] && arguments[1].method) method = arguments[1].method;
-            
-            sendToFlutter('network', {
-                type: 'fetch',
-                url: url,
-                method: method.toUpperCase(),
-                status: response.status,
-                duration: duration,
-                responseBody: text
-            });
+            const report = function (body) {
+                sendToFlutter('network', {
+                    type: 'fetch', url: url, method: method, status: response.status,
+                    duration: duration, requestBody: requestBody, responseBody: body
+                });
+            };
+            // Read the body in the background so the page is never blocked
+            // and streaming / binary responses are not consumed.
+            if (isTextual(response.headers.get('content-type'))) {
+                response.clone().text().then(function (t) { report(clip(t)); }, function () { report(null); });
+            } else {
+                report('[binary: ' + (response.headers.get('content-type') || 'unknown') + ']');
+            }
             return response;
         } catch (e) {
-            const duration = Date.now() - startTime;
             sendToFlutter('network', {
-                type: 'fetch',
-                url: url,
-                method: 'GET',
-                status: 0,
-                duration: duration,
-                error: e.toString()
+                type: 'fetch', url: url, method: method, status: 0,
+                duration: Date.now() - startTime, requestBody: requestBody, error: String(e)
             });
             throw e;
         }
@@ -121,18 +133,24 @@ const String debugSdkJs = '''
         return originalXHROpen.apply(this, arguments);
     };
     XMLHttpRequest.prototype.send = function(body) {
-        for (const pattern in window._apiMocks) {
-            if (this._requestUrl && this._requestUrl.includes(pattern)) {
-                console.warn('[Mocked XHR] ' + this._requestUrl);
-                const mockBody = window._apiMocks[pattern];
-                Object.defineProperty(this, 'status', { value: 200 });
-                Object.defineProperty(this, 'responseText', { value: mockBody });
-                Object.defineProperty(this, 'readyState', { value: 4 });
-                sendToFlutter('network', { type: 'xhr', url: this._requestUrl, method: this._requestMethod, status: 200, duration: 0, responseBody: mockBody });
-                if (this.onload) this.onload();
-                if (this.onreadystatechange) this.onreadystatechange();
-                return;
-            }
+        const xhr = this;
+        const mockBody = findMock(xhr._requestUrl);
+        if (mockBody !== null) {
+            console.warn('[Mocked XHR] ' + xhr._requestUrl);
+            Object.defineProperty(xhr, 'status', { value: 200, configurable: true });
+            Object.defineProperty(xhr, 'statusText', { value: 'OK', configurable: true });
+            Object.defineProperty(xhr, 'responseText', { value: mockBody, configurable: true });
+            Object.defineProperty(xhr, 'response', { value: mockBody, configurable: true });
+            Object.defineProperty(xhr, 'readyState', { value: 4, configurable: true });
+            sendToFlutter('network', { type: 'xhr', url: xhr._requestUrl, method: (xhr._requestMethod || 'GET').toUpperCase(), status: 200, duration: 0, requestBody: body ? clip(body) : null, responseBody: clip(mockBody) });
+            // Fire asynchronously, like a real request, so both on* handlers
+            // and addEventListener listeners run.
+            setTimeout(function () {
+                xhr.dispatchEvent(new Event('readystatechange'));
+                xhr.dispatchEvent(new ProgressEvent('load'));
+                xhr.dispatchEvent(new ProgressEvent('loadend'));
+            }, 0);
+            return;
         }
 
         this._startTime = Date.now();
@@ -144,8 +162,8 @@ const String debugSdkJs = '''
                 method: (this._requestMethod || 'GET').toUpperCase(),
                 status: this.status,
                 duration: duration,
-                requestBody: body ? String(body) : null,
-                responseBody: this.responseText || ''
+                requestBody: typeof body === 'string' ? clip(body) : null,
+                responseBody: (this.responseType === '' || this.responseType === 'text') ? clip(this.responseText) : '[' + this.responseType + ' response]'
             });
         });
         this.addEventListener('error', function() {
@@ -276,11 +294,12 @@ const String debugSdkJs = '''
                 text: el.innerText ? el.innerText.substring(0, 50) : ''
             };
             
-            window.DebugBridge.postMessage(JSON.stringify({ type: 'dom_node', data: nodeInfo }));
+            sendToFlutter('dom_node', nodeInfo);
         };
         
         document.addEventListener('mousemove', window._inspectorMove, true);
-        document.addEventListener('touchmove', function(e) { window._inspectorMove(e.touches[0]); }, true);
+        window._inspectorTouch = function(e) { if (e.touches && e.touches[0]) window._inspectorMove(e.touches[0]); };
+        document.addEventListener('touchmove', window._inspectorTouch, true);
         document.addEventListener('click', window._inspectorClick, true);
     };
 
@@ -289,7 +308,7 @@ const String debugSdkJs = '''
         const overlay = document.getElementById('debug-inspector-overlay');
         if (overlay) overlay.remove();
         document.removeEventListener('mousemove', window._inspectorMove, true);
-        document.removeEventListener('touchmove', window._inspectorMove, true);
+        document.removeEventListener('touchmove', window._inspectorTouch, true);
         document.removeEventListener('click', window._inspectorClick, true);
     };
 

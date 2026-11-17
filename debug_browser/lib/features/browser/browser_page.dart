@@ -7,6 +7,7 @@ import 'package:screenshot/screenshot.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../core/scripts/debug_sdk_string.dart';
+import '../../core/js_bridge.dart';
 import '../../core/providers.dart';
 import '../../services/export_service.dart';
 
@@ -21,48 +22,50 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
   late final WebViewController _controller;
   final TextEditingController _urlController = TextEditingController();
   final ScreenshotController _screenshotController = ScreenshotController();
+  static const String _homeUrl = 'https://flutter.dev';
   bool _isLoading = false;
+  bool _sdkActive = false;
   double _progress = 0.0;
 
   @override
   void initState() {
     super.initState();
-    _urlController.text = 'https://flutter.dev';
-    
+    _urlController.text = _homeUrl;
+
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0x00000000))
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (int progress) {
-            setState(() {
-              _progress = progress / 100.0;
-            });
-            if (progress == 100) {
-              _injectDebugSdk();
-            }
+            if (!mounted) return;
+            setState(() => _progress = progress / 100.0);
           },
           onUrlChange: (UrlChange change) {
-            if (change.url != null) {
-              setState(() {
-                _urlController.text = change.url!;
-              });
+            if (change.url != null && mounted) {
+              setState(() => _urlController.text = change.url!);
             }
           },
           onPageStarted: (String url) {
+            _sdkActive = false; // new document: SDK not injected yet
+            if (!mounted) return;
             setState(() {
               _isLoading = true;
               _urlController.text = url;
             });
-            _injectDebugSdk();
           },
           onPageFinished: (String url) {
-            setState(() {
-              _isLoading = false;
-            });
+            if (mounted) setState(() => _isLoading = false);
             _injectDebugSdk();
           },
-          onWebResourceError: (WebResourceError error) {},
+          onWebResourceError: (WebResourceError error) {
+            if (error.isForMainFrame != true) return;
+            ref.read(consoleLogsProvider.notifier).addLog(ConsoleLog(
+                  level: 'error',
+                  message: '[Navigation] ${error.errorCode}: ${error.description}',
+                  timestamp: DateTime.now(),
+                ));
+          },
         ),
       )
       ..addJavaScriptChannel(
@@ -72,101 +75,85 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
         },
       )
       ..setOnConsoleMessage((JavaScriptConsoleMessage msg) {
-        String level = 'info';
-        if (msg.level.name == 'error') {
-          level = 'error';
-        } else if (msg.level.name == 'warning') {
-          level = 'warn';
-        } else if (msg.level.name == 'debug') {
-          level = 'debug';
-        }
+        // Native console messages are only used before the SDK hooks the
+        // page console, to avoid duplicates afterwards.
+        if (_sdkActive) return;
+        final level = switch (msg.level) {
+          JavaScriptLogLevel.error => 'error',
+          JavaScriptLogLevel.warning => 'warn',
+          JavaScriptLogLevel.debug => 'debug',
+          _ => 'info',
+        };
         ref.read(consoleLogsProvider.notifier).addLog(
-          ConsoleLog(
-            level: level,
-            message: '[System] \${msg.message}',
-            timestamp: DateTime.now(),
-          ),
-        );
+              ConsoleLog(
+                level: level,
+                message: '[System] ${msg.message}',
+                timestamp: DateTime.now(),
+              ),
+            );
       })
-      ..loadRequest(Uri.parse(_urlController.text));
+      ..loadRequest(Uri.parse(_homeUrl));
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(webViewControllerProvider.notifier).setController(_controller);
     });
   }
 
-  void _injectDebugSdk() {
-    _controller.runJavaScript(debugSdkJs);
-    final mocks = ref.read(networkMocksProvider);
-    final jsonStr = jsonEncode(mocks).replaceAll("'", "\\'");
-    _controller.runJavaScript("window.updateApiMocks('$jsonStr');");
+  @override
+  void dispose() {
+    _urlController.dispose();
+    super.dispose();
   }
 
-  void _handleJsMessage(String message) {
+  Future<void> _injectDebugSdk() async {
     try {
-      final decoded = jsonDecode(message);
-      final type = decoded['type'];
-      final data = decoded['data'];
-      final timestamp = DateTime.fromMillisecondsSinceEpoch(decoded['timestamp'] ?? DateTime.now().millisecondsSinceEpoch);
-
-      if (type == 'console') {
-        ref.read(consoleLogsProvider.notifier).addLog(
-          ConsoleLog(
-            level: data['level'],
-            message: data['message'],
-            timestamp: timestamp,
-          ),
-        );
-      } else if (type == 'error') {
-        ref.read(consoleLogsProvider.notifier).addLog(
-          ConsoleLog(
-            level: 'error',
-            message: data['message'] + (data['stack'] != null ? "\\n\${data['stack']}" : ''),
-            timestamp: timestamp,
-          ),
-        );
-      } else if (type == 'network') {
-        ref.read(networkRequestsProvider.notifier).addRequest(
-          NetworkRequest(
-            type: data['type'],
-            url: data['url'],
-            method: data['method'],
-            status: data['status'],
-            duration: data['duration'],
-            requestBody: data['requestBody'],
-            responseBody: data['responseBody'],
-            error: data['error'],
-            timestamp: timestamp,
-          ),
-        );
-      } else if (type == 'storage') {
-        ref.read(storageProvider.notifier).updateStorage(data);
-      } else if (type == 'device' || type == 'performance') {
-        ref.read(devicePerformanceProvider.notifier).updateInfo({type: data});
-      } else if (type == 'dom_node') {
-        ref.read(domTreeProvider.notifier).setTree(data);
-      }
+      await _controller.runJavaScript(debugSdkJs);
+      _sdkActive = true;
+      await _pushMocks(ref.read(networkMocksProvider));
     } catch (e) {
-      debugPrint('Error parsing JS message: \$e');
+      debugPrint('Debug SDK injection failed: $e');
+    }
+  }
+
+  Future<void> _pushMocks(Map<String, String> mocks) async {
+    final payload = jsString(jsonEncode(mocks));
+    try {
+      await _controller.runJavaScript(
+          'if (window.updateApiMocks) window.updateApiMocks($payload);');
+    } catch (e) {
+      debugPrint('Failed to push mocks: $e');
+    }
+  }
+
+  void _handleJsMessage(String raw) {
+    final msg = parseBridgeMessage(raw);
+    switch (msg) {
+      case ConsoleMessage(:final log):
+        ref.read(consoleLogsProvider.notifier).addLog(log);
+      case NetworkMessage(:final request):
+        ref.read(networkRequestsProvider.notifier).addRequest(request);
+      case StorageMessage(:final data):
+        ref.read(storageProvider.notifier).updateStorage(data);
+      case DeviceInfoMessage(:final kind, :final data):
+        ref.read(devicePerformanceProvider.notifier).updateInfo({kind: data});
+      case DomNodeMessage(:final data):
+        ref.read(domTreeProvider.notifier).setTree(data);
+      case null:
+        debugPrint('Ignored malformed bridge message');
     }
   }
 
   void _loadUrl() {
-    String url = _urlController.text.trim();
-    if (!url.startsWith('http')) {
-      url = 'https://\$url';
-    }
-    _controller.loadRequest(Uri.parse(url));
+    final uri = normaliseUrlInput(_urlController.text);
+    _sdkActive = false;
+    _controller.loadRequest(uri);
     FocusScope.of(context).unfocus();
   }
 
   @override
   Widget build(BuildContext context) {
-    ref.listen(networkMocksProvider, (prev, next) {
-      final jsonStr = jsonEncode(next).replaceAll("'", "\\'");
-      _controller.runJavaScript("window.updateApiMocks('$jsonStr');");
-    });
-    
+    ref.listen(networkMocksProvider, (prev, next) => _pushMocks(next));
+
     return Scaffold(
       appBar: AppBar(
         title: TextField(
@@ -202,7 +189,10 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () => _controller.reload(),
+            onPressed: () {
+              _sdkActive = false;
+              _controller.reload();
+            },
           ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.settings),
@@ -213,18 +203,26 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
                 final image = await _screenshotController.capture();
                 if (image != null) {
                   final tempDir = await getTemporaryDirectory();
-                  final file = await File("${tempDir.path}/screenshot.png").create();
+                  final file = File('${tempDir.path}/screenshot_${DateTime.now().millisecondsSinceEpoch}.png');
                   await file.writeAsBytes(image);
-                  await Share.shareXFiles([XFile(file.path)], text: 'Screenshot from Debug Browser');
+                  await SharePlus.instance.share(ShareParams(
+                    files: [XFile(file.path)],
+                    text: 'Screenshot from Debug Browser',
+                  ));
                 }
               } else if (value == 'export') {
-                await ExportService.exportSession(ref);
+                final ok = await ExportService.exportSession(ref);
+                if (!ok && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Export failed')));
+                }
               } else if (value == 'hard_reload') {
                 await _controller.clearCache();
                 await _controller.clearLocalStorage();
                 await WebViewCookieManager().clearCookies();
                 ref.read(consoleLogsProvider.notifier).clear();
                 ref.read(networkRequestsProvider.notifier).clear();
+                _sdkActive = false;
                 _controller.reload();
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cache cleared & hard reloaded!')));
@@ -232,14 +230,19 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
                 final agent = value.substring(3);
                 ref.read(userAgentProvider.notifier).setAgent(agent);
                 await _controller.setUserAgent(agent == 'default' ? null : agent);
+                _sdkActive = false;
                 _controller.reload();
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('User-Agent changed to \$agent')));
               } else if (value == 'bookmark') {
-                final currentUrl = _urlController.text;
+                final currentUrl = await _controller.currentUrl() ?? _urlController.text;
+                final title = await _controller.getTitle();
                 if (currentUrl.isNotEmpty) {
-                  ref.read(bookmarksProvider.notifier).addBookmark('Bookmark', currentUrl);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bookmarked added!')));
+                  final added = ref.read(bookmarksProvider.notifier).addBookmark(
+                      (title == null || title.isEmpty) ? currentUrl : title, currentUrl);
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text(added ? 'Bookmark added' : 'Already bookmarked')));
                 }
               }
             },
@@ -328,9 +331,9 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
                                 },
                               ),
                               onTap: () {
+                                Navigator.pop(context);
                                 _urlController.text = b['url'] ?? '';
                                 _loadUrl();
-                                Navigator.pop(context);
                               },
                             );
                           },
