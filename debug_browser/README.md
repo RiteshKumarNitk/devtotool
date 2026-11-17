@@ -1,34 +1,49 @@
 # Debug Browser
 
-A Flutter mobile browser with built-in developer tools, for debugging web pages directly on a phone without a desktop DevTools connection.
+A Flutter mobile browser with built-in developer tools, for debugging web pages directly on a phone without a desktop DevTools connection. By InnovateX Technology.
 
 ## Features
 
-| Panel | What it does |
+| Area | What it does |
 |---|---|
-| **Browser** | Address bar (URL or search), back/forward/reload, bookmarks (persisted), User-Agent switching, hard reload (clears cache, storage and cookies), screenshot, session export |
-| **Console** | Captures `console.*`, uncaught errors and unhandled rejections; includes a JS REPL against the current page |
-| **Network** | Logs `fetch` and `XMLHttpRequest` calls with method, status, timing and request/response bodies (text only, truncated at 100 KB) |
-| **API Mocks** | Return a fixed response for any URL containing a pattern (fetch and XHR); persisted across launches |
-| **Storage** | View, edit and delete `localStorage` / `sessionStorage`; view cookies |
-| **DOM** | Tap-to-inspect elements: tag, id, classes and key computed styles |
-| **Device / Performance** | User agent, screen, locale; load time, FCP, JS heap usage |
+| **Browser** | Address bar (URL or search), back/forward/reload, bookmarks and history (persisted), User-Agent presets, hard reload, screenshot, session export. Android back goes back in the page. |
+| **Floating debug bubble** | Draggable bubble over the page showing live error/request counts; opens Console, Network, Performance or a bug report in one tap. An orange ring means network throttling is on. |
+| **Console** | Captures `console.*`, uncaught errors and rejections. Level filters with counts, search, JSON shown as an expandable tree, copy all. JS REPL with command history. |
+| **JS snippets** | Saved scripts (starter set included) you can run against the page in one tap. |
+| **Network** | `fetch`/XHR with method, status, timing, request/response headers and bodies (text only, truncated at 100 KB). Filter by text, type and status class. Copy as cURL / fetch, HAR export. |
+| **Network conditions** | Fast 3G, Slow 3G or Offline for the page's fetch/XHR (session-only, with a banner). |
+| **API mocks** | Rules matching URL substring or regex, plus HTTP method; custom status, delay, content type and body; on/off per rule; import/export as JSON. Persisted. |
+| **Storage** | View, search, add, edit and delete `localStorage`, `sessionStorage` and cookies (path and expiry for cookies); clear all. |
+| **DOM** | Tap-to-inspect or browse the element tree; select to highlight in the page. Edit CSS properties and attributes live; view outerHTML. |
+| **Performance** | Core Web Vitals (LCP, INP*, CLS, FCP, TTFB) with good/needs-work/poor ratings, load timing, JS heap, resource breakdown and a waterfall of the slowest resources. |
+| **Accessibility audit** | Missing alt text, unlabelled controls and form fields, colour contrast (WCAG AA), tap-target size, heading order, duplicate ids, missing lang/title, zoom blocking. Tap an issue to highlight the element. |
+| **Device emulation** | Viewport presets (iPhone SE/15, Pixel 8, Galaxy Fold, iPad mini, laptop) and geolocation override (presets or custom). |
+| **Environments** | Saved dev/staging/prod base URLs; "open current path here" switches environment while keeping the path and query. |
+| **Saved sessions** | Save console + network data on the device, reload it later, or share it as JSON. |
+| **Bug report** | One tap bundles a Markdown report (URL, device, description, errors, failed requests as cURL, Web Vitals), a screenshot and a HAR file into the share sheet. |
 
-Session data (console + network + storage + device) exports as JSON through the share sheet.
+\*INP is approximated from the slowest interaction observed so far.
+
+**Privacy:** all data stays on the device. The app has no analytics, accounts or servers; data leaves the device only when the user shares or exports it.
 
 ## Architecture
 
 ```
 lib/
   core/
-    providers.dart        Riverpod state (capped buffers, Hive-persisted settings)
-    js_bridge.dart        Pure parsing of messages from the page + JS-safe encoding
-    scripts/debug_sdk_string.dart   JS SDK injected into each page
-  features/<panel>/       One folder per panel
-  services/export_service.dart
+    providers.dart          Core state: console/network buffers, mock rules, theme, bookmarks
+    tool_providers.dart     Tools state: tabs, page data, emulation, history, environments,
+                            snippets, saved sessions
+    js_bridge.dart          Validated parsing of page messages + JS-safe string encoding
+    network_export.dart     cURL / fetch / HAR builders and network filters (pure)
+    scripts/
+      debug_sdk_string.dart   Injected SDK: console, errors, fetch/XHR, mocks, throttling
+      debug_sdk_extras.dart   Injected SDK: Web Vitals, DOM tree/editing, a11y audit, geolocation
+  features/<panel>/         One folder per panel; more/ holds the tools hub
+  services/                 Export (JSON/HAR) and bug-report bundling
 ```
 
-The JS SDK is injected after each page load. It hooks the console, errors, `fetch` and XHR, and sends JSON messages over the `DebugBridge` JavaScript channel. `parseBridgeMessage` validates every message, because page content is untrusted.
+The SDK is injected after each page load. It reports over the `DebugBridge` JavaScript channel, and `parseBridgeMessage` validates every message because page content is untrusted. Values passed from Dart into page JavaScript always go through `jsString()` (JSON encoding), never string concatenation.
 
 ## Development
 
@@ -55,5 +70,8 @@ flutter run
 ## Known limitations
 
 - Logs written before the page finishes loading are captured only through the native console fallback, not the SDK.
-- Request/response **headers** are not captured yet; that needs native request interception.
+- Only `fetch`/XHR traffic is captured, mocked and throttled. Images, CSS, scripts and navigations need native request interception.
+- Headers that browsers hide from JavaScript (`Set-Cookie`, most cross-origin response headers) are not visible, and HttpOnly cookies are not listed.
+- The geolocation override applies to calls made after the page loads.
+- One page at a time (no multiple tabs yet).
 - Screenshots of the WebView can come out blank on some Android devices (platform-view limitation).

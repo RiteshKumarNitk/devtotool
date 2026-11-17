@@ -28,7 +28,7 @@ class DevicePage extends ConsumerWidget {
                 _buildInfoCard(
                   context,
                   title: 'Screen Size',
-                  value: "\${device['screenWidth']} x \${device['screenHeight']}",
+                  value: "${device['screenWidth']} x ${device['screenHeight']}",
                   icon: Icons.screenshot_monitor,
                 ),
                 _buildInfoCard(

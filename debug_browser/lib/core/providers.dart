@@ -40,6 +40,8 @@ class NetworkRequest {
   final String? responseBody;
   final String? error;
   final DateTime timestamp;
+  final Map<String, String> requestHeaders;
+  final Map<String, String> responseHeaders;
 
   NetworkRequest({
     required this.type,
@@ -51,7 +53,11 @@ class NetworkRequest {
     this.responseBody,
     this.error,
     required this.timestamp,
+    this.requestHeaders = const {},
+    this.responseHeaders = const {},
   });
+
+  bool get failed => status == 0 || error != null;
 
   Map<String, dynamic> toJson() => {
         'type': type,
@@ -63,6 +69,8 @@ class NetworkRequest {
         'responseBody': responseBody,
         'error': error,
         'timestamp': timestamp.toIso8601String(),
+        'requestHeaders': requestHeaders,
+        'responseHeaders': responseHeaders,
       };
 }
 
@@ -164,34 +172,180 @@ class DomTreeNotifier extends Notifier<Map<String, dynamic>?> {
 final domTreeProvider =
     NotifierProvider<DomTreeNotifier, Map<String, dynamic>?>(DomTreeNotifier.new);
 
-class NetworkMocksNotifier extends Notifier<Map<String, String>> {
-  static const _key = 'networkMocks';
+/// A response-mocking rule applied by the debug SDK to fetch and XHR.
+@immutable
+class MockRule {
+  final String id;
+  final String pattern;
+  final bool isRegex;
+  final String method; // 'ANY' or an HTTP method
+  final int status;
+  final int delayMs;
+  final String body;
+  final String contentType;
+  final bool enabled;
+
+  const MockRule({
+    required this.id,
+    required this.pattern,
+    this.isRegex = false,
+    this.method = 'ANY',
+    this.status = 200,
+    this.delayMs = 0,
+    this.body = '',
+    this.contentType = 'application/json',
+    this.enabled = true,
+  });
+
+  static const methods = ['ANY', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+
+  /// Returns an error message if the rule is invalid, else null.
+  String? validate() {
+    if (pattern.trim().isEmpty) return 'Pattern is required';
+    if (status < 200 || status > 599) return 'Status must be 200–599';
+    if (delayMs < 0 || delayMs > 60000) return 'Delay must be 0–60000 ms';
+    if (isRegex) {
+      try {
+        RegExp(pattern);
+      } on FormatException catch (e) {
+        return 'Invalid regex: ${e.message}';
+      }
+    }
+    return null;
+  }
+
+  MockRule copyWith({
+    String? pattern,
+    bool? isRegex,
+    String? method,
+    int? status,
+    int? delayMs,
+    String? body,
+    String? contentType,
+    bool? enabled,
+  }) =>
+      MockRule(
+        id: id,
+        pattern: pattern ?? this.pattern,
+        isRegex: isRegex ?? this.isRegex,
+        method: method ?? this.method,
+        status: status ?? this.status,
+        delayMs: delayMs ?? this.delayMs,
+        body: body ?? this.body,
+        contentType: contentType ?? this.contentType,
+        enabled: enabled ?? this.enabled,
+      );
+
+  /// Shape consumed by the SDK's `updateApiMocks`.
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'pattern': pattern,
+        'isRegex': isRegex,
+        'method': method,
+        'status': status,
+        'delay': delayMs,
+        'body': body,
+        'contentType': contentType,
+        'enabled': enabled,
+      };
+
+  static MockRule? fromJson(Object? json) {
+    if (json is! Map) return null;
+    final pattern = json['pattern']?.toString() ?? '';
+    if (pattern.isEmpty) return null;
+    int asInt(Object? v, int d) => v is num ? v.toInt() : int.tryParse('$v') ?? d;
+    return MockRule(
+      id: json['id']?.toString() ?? newId(),
+      pattern: pattern,
+      isRegex: json['isRegex'] == true,
+      method: methods.contains(json['method']) ? json['method'] as String : 'ANY',
+      status: asInt(json['status'], 200),
+      delayMs: asInt(json['delay'], 0),
+      body: json['body']?.toString() ?? '',
+      contentType: json['contentType']?.toString() ?? 'application/json',
+      enabled: json['enabled'] != false,
+    );
+  }
+
+  static int _seq = 0;
+  static String newId() => '${DateTime.now().microsecondsSinceEpoch}_${_seq++}';
+}
+
+/// Parses an imported mock file: a list of rules, or a legacy
+/// `{pattern: body}` map. Invalid entries are skipped.
+List<MockRule> parseMockRules(Object? json) {
+  if (json is List) {
+    return json.map(MockRule.fromJson).whereType<MockRule>().toList();
+  }
+  if (json is Map) {
+    return [
+      for (final e in json.entries)
+        if (e.key.toString().isNotEmpty)
+          MockRule(id: MockRule.newId(), pattern: e.key.toString(), body: '${e.value ?? ''}'),
+    ];
+  }
+  return const [];
+}
+
+class NetworkMocksNotifier extends Notifier<List<MockRule>> {
+  static const _key = 'networkMockRules';
+  static const _legacyKey = 'networkMocks';
 
   @override
-  Map<String, String> build() {
-    final saved = _settingsBoxOrNull()?.get(_key);
-    if (saved is Map) {
-      return saved.map((k, v) => MapEntry(k.toString(), v.toString()));
+  List<MockRule> build() {
+    final box = _settingsBoxOrNull();
+    final saved = box?.get(_key);
+    if (saved is List) return parseMockRules(saved);
+    // One-time migration from the old {pattern: body} format.
+    final legacy = box?.get(_legacyKey);
+    if (legacy is Map) {
+      final migrated = parseMockRules(legacy);
+      box?.put(_key, migrated.map((r) => r.toJson()).toList());
+      box?.delete(_legacyKey);
+      return migrated;
     }
-    return {};
+    return [];
   }
 
-  void addMock(String pattern, String response) {
-    if (pattern.trim().isEmpty) return;
-    state = {...state, pattern.trim(): response};
+  void upsert(MockRule rule) {
+    final i = state.indexWhere((r) => r.id == rule.id);
+    if (i < 0) {
+      state = [...state, rule];
+    } else {
+      final next = [...state];
+      next[i] = rule;
+      state = next;
+    }
     _persist();
   }
 
-  void removeMock(String pattern) {
-    state = Map<String, String>.from(state)..remove(pattern);
+  void toggle(String id) {
+    state = [for (final r in state) r.id == id ? r.copyWith(enabled: !r.enabled) : r];
     _persist();
   }
 
-  void _persist() => _settingsBoxOrNull()?.put(_key, state);
+  void remove(String id) {
+    state = state.where((r) => r.id != id).toList();
+    _persist();
+  }
+
+  /// Adds imported rules; replaces existing ones with the same id.
+  int importRules(List<MockRule> rules) {
+    final byId = {for (final r in state) r.id: r};
+    for (final r in rules) {
+      byId[r.id] = r;
+    }
+    state = byId.values.toList();
+    _persist();
+    return rules.length;
+  }
+
+  void _persist() =>
+      _settingsBoxOrNull()?.put(_key, state.map((r) => r.toJson()).toList());
 }
 
 final networkMocksProvider =
-    NotifierProvider<NetworkMocksNotifier, Map<String, String>>(NetworkMocksNotifier.new);
+    NotifierProvider<NetworkMocksNotifier, List<MockRule>>(NetworkMocksNotifier.new);
 
 class BookmarksNotifier extends Notifier<List<Map<String, String>>> {
   static const _key = 'bookmarks';
@@ -226,3 +380,29 @@ class BookmarksNotifier extends Notifier<List<Map<String, String>>> {
 
 final bookmarksProvider =
     NotifierProvider<BookmarksNotifier, List<Map<String, String>>>(BookmarksNotifier.new);
+
+/// Simulated network conditions applied inside the page by the debug SDK.
+/// Session-only on purpose: a forgotten "Offline" must not survive restarts.
+enum NetworkCondition {
+  none('No throttling', 0, false),
+  fast3g('Fast 3G (~560 ms)', 560, false),
+  slow3g('Slow 3G (~2 s)', 2000, false),
+  offline('Offline', 0, true);
+
+  const NetworkCondition(this.label, this.latencyMs, this.isOffline);
+  final String label;
+  final int latencyMs;
+  final bool isOffline;
+
+  Map<String, dynamic> toJson() => {'offline': isOffline, 'latency': latencyMs};
+}
+
+class NetworkConditionNotifier extends Notifier<NetworkCondition> {
+  @override
+  NetworkCondition build() => NetworkCondition.none;
+
+  void set(NetworkCondition condition) => state = condition;
+}
+
+final networkConditionProvider =
+    NotifierProvider<NetworkConditionNotifier, NetworkCondition>(NetworkConditionNotifier.new);

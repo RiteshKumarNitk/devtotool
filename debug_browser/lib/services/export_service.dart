@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import '../core/network_export.dart';
 import '../core/providers.dart';
 
 class ExportService {
@@ -43,6 +44,41 @@ class ExportService {
       return true;
     } catch (e, st) {
       debugPrint('Error exporting session: $e\n$st');
+      return false;
+    }
+  }
+
+  /// Exports [requests] as a HAR file via the share sheet.
+  static Future<bool> exportHar(List<NetworkRequest> requests) async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final file = File(
+          '${tempDir.path}/network_${DateTime.now().millisecondsSinceEpoch}.har');
+      await file.writeAsString(const JsonEncoder.withIndent('  ').convert(buildHar(requests)));
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile(file.path, mimeType: 'application/json')],
+        text: 'Network log (HAR) from Debug Browser',
+      ));
+      return true;
+    } catch (e, st) {
+      debugPrint('Error exporting HAR: $e\n$st');
+      return false;
+    }
+  }
+
+  /// Shares any JSON-encodable [data] as `<fileName>_<ts>.json`.
+  static Future<bool> shareJson(Object data, {required String fileName, required String text}) async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final file = File('${tempDir.path}/${fileName}_${DateTime.now().millisecondsSinceEpoch}.json');
+      await file.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile(file.path, mimeType: 'application/json')],
+        text: text,
+      ));
+      return true;
+    } catch (e, st) {
+      debugPrint('Error sharing $fileName: $e\n$st');
       return false;
     }
   }

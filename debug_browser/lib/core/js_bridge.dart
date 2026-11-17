@@ -13,6 +13,14 @@ String? _truncate(Object? v) {
   return s.length > maxBodyChars ? '${s.substring(0, maxBodyChars)}… [truncated]' : s;
 }
 
+Map<String, String> _asHeaders(Object? v) {
+  if (v is! Map) return const {};
+  return {
+    for (final e in v.entries)
+      if (e.key != null) e.key.toString().toLowerCase(): '${e.value ?? ''}',
+  };
+}
+
 int _asInt(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 
 /// A decoded message from the injected debug SDK.
@@ -39,6 +47,13 @@ class DeviceInfoMessage extends BridgeMessage {
   final String kind; // 'device' | 'performance'
   final Map<String, dynamic> data;
   const DeviceInfoMessage(this.kind, this.data);
+}
+
+/// Per-page data from the SDK extras: 'vitals', 'dom_tree', 'a11y'.
+class PageDataMessage extends BridgeMessage {
+  final String kind;
+  final Map<String, dynamic> data;
+  const PageDataMessage(this.kind, this.data);
 }
 
 class DomNodeMessage extends BridgeMessage {
@@ -91,6 +106,8 @@ BridgeMessage? parseBridgeMessage(String raw) {
         responseBody: _truncate(map['responseBody']),
         error: map['error']?.toString(),
         timestamp: timestamp,
+        requestHeaders: _asHeaders(map['requestHeaders']),
+        responseHeaders: _asHeaders(map['responseHeaders']),
       ));
     case 'storage':
       return StorageMessage(map);
@@ -99,6 +116,10 @@ BridgeMessage? parseBridgeMessage(String raw) {
       return DeviceInfoMessage(type as String, map);
     case 'dom_node':
       return DomNodeMessage(map);
+    case 'vitals':
+    case 'dom_tree':
+    case 'a11y':
+      return PageDataMessage(type as String, map);
   }
   return null;
 }

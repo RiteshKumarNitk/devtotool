@@ -60,22 +60,82 @@ const String debugSdkJs = '''
 
     // 3. Hook Fetch
     // 3. Mock API Support
-    window._apiMocks = {};
+    // Mock rules: [{pattern, isRegex, method, status, delay, body, contentType, enabled}]
+    // A legacy {pattern: body} object is also accepted.
+    window._apiMocks = [];
     window.updateApiMocks = function(mocksJson) {
-        try { window._apiMocks = JSON.parse(mocksJson) || {}; } catch (e) { window._apiMocks = {}; }
+        let parsed;
+        try { parsed = JSON.parse(mocksJson); } catch (e) { parsed = []; }
+        if (Array.isArray(parsed)) {
+            window._apiMocks = parsed;
+        } else if (parsed && typeof parsed === 'object') {
+            window._apiMocks = Object.keys(parsed).map(function (k) { return { pattern: k, body: parsed[k] }; });
+        } else {
+            window._apiMocks = [];
+        }
     };
-    function findMock(url) {
+    function findMock(url, method) {
         if (!url) return null;
-        for (const pattern in window._apiMocks) {
-            if (String(url).indexOf(pattern) !== -1) return window._apiMocks[pattern];
+        url = String(url);
+        method = String(method || 'GET').toUpperCase();
+        const rules = window._apiMocks || [];
+        for (let i = 0; i < rules.length; i++) {
+            const r = rules[i];
+            if (!r || r.enabled === false || !r.pattern) continue;
+            if (r.method && r.method !== 'ANY' && String(r.method).toUpperCase() !== method) continue;
+            let hit = false;
+            if (r.isRegex) {
+                try { hit = new RegExp(r.pattern).test(url); } catch (e) { hit = false; }
+            } else {
+                hit = url.indexOf(r.pattern) !== -1;
+            }
+            if (hit) {
+                let status = parseInt(r.status, 10);
+                if (!(status >= 200 && status <= 599)) status = 200;
+                return {
+                    body: r.body == null ? '' : String(r.body),
+                    status: status,
+                    delay: Math.max(0, parseInt(r.delay, 10) || 0),
+                    contentType: r.contentType || 'application/json'
+                };
+            }
         }
         return null;
     }
+    function nullBodyStatus(status) { return status === 204 || status === 205 || status === 304; }
     const MAX_BODY = 100 * 1024;
     function clip(text) {
         if (text == null) return null;
         text = String(text);
         return text.length > MAX_BODY ? text.substring(0, MAX_BODY) + '... [truncated]' : text;
+    }
+    // Network condition simulation (set from Flutter).
+    window._netConfig = { offline: false, latency: 0 };
+    window.updateNetConfig = function(json) {
+        try { window._netConfig = Object.assign({ offline: false, latency: 0 }, JSON.parse(json)); } catch (e) { }
+    };
+    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+    function headersToObject(h) {
+        const out = {};
+        if (!h) return out;
+        try {
+            if (typeof Headers !== 'undefined' && h instanceof Headers) {
+                h.forEach(function (v, k) { out[k] = v; });
+            } else if (Array.isArray(h)) {
+                h.forEach(function (pair) { out[String(pair[0]).toLowerCase()] = String(pair[1]); });
+            } else if (typeof h === 'object') {
+                Object.keys(h).forEach(function (k) { out[k.toLowerCase()] = String(h[k]); });
+            }
+        } catch (e) { }
+        return out;
+    }
+    function parseRawHeaders(raw) {
+        const out = {};
+        (raw || '').trim().split(/[\\r\\n]+/).forEach(function (line) {
+            const i = line.indexOf(':');
+            if (i > 0) out[line.substring(0, i).trim().toLowerCase()] = line.substring(i + 1).trim();
+        });
+        return out;
     }
     function isTextual(contentType) {
         if (!contentType) return true;
@@ -89,22 +149,32 @@ const String debugSdkJs = '''
         const url = isRequest ? input.url : String(input);
         const method = ((init && init.method) || (isRequest ? input.method : 'GET') || 'GET').toUpperCase();
         const requestBody = init && typeof init.body === 'string' ? clip(init.body) : null;
+        const requestHeaders = Object.assign({}, isRequest ? headersToObject(input.headers) : {}, headersToObject(init && init.headers));
+        const net = window._netConfig || {};
+        if (net.offline) {
+            sendToFlutter('network', { type: 'fetch', url: url, method: method, status: 0, duration: 0, requestBody: requestBody, requestHeaders: requestHeaders, error: 'Simulated offline' });
+            throw new TypeError('Failed to fetch');
+        }
+        if (net.latency > 0) await sleep(net.latency);
 
-        const mockBody = findMock(url);
-        if (mockBody !== null) {
-            console.warn('[Mocked Fetch] ' + method + ' ' + url);
-            sendToFlutter('network', { type: 'fetch', url: url, method: method, status: 200, duration: 0, requestBody: requestBody, responseBody: clip(mockBody) });
-            return new Response(mockBody, { status: 200, statusText: 'OK', headers: { 'Content-Type': 'application/json' } });
+        const mock = findMock(url, method);
+        if (mock) {
+            if (mock.delay > 0) await sleep(mock.delay);
+            console.warn('[Mocked Fetch] ' + method + ' ' + url + ' -> ' + mock.status);
+            sendToFlutter('network', { type: 'fetch', url: url, method: method, status: mock.status, duration: (net.latency || 0) + mock.delay, requestBody: requestBody, requestHeaders: requestHeaders, responseHeaders: { 'content-type': mock.contentType, 'x-debug-mock': '1' }, responseBody: clip(mock.body) });
+            return new Response(nullBodyStatus(mock.status) ? null : mock.body, { status: mock.status, headers: { 'Content-Type': mock.contentType, 'X-Debug-Mock': '1' } });
         }
 
-        const startTime = Date.now();
+        const startTime = Date.now() - (net.latency || 0);
         try {
             const response = await originalFetch.apply(this, arguments);
+            const responseHeaders = headersToObject(response.headers);
             const duration = Date.now() - startTime;
             const report = function (body) {
                 sendToFlutter('network', {
                     type: 'fetch', url: url, method: method, status: response.status,
-                    duration: duration, requestBody: requestBody, responseBody: body
+                    duration: duration, requestBody: requestBody, requestHeaders: requestHeaders,
+                    responseHeaders: responseHeaders, responseBody: body
                 });
             };
             // Read the body in the background so the page is never blocked
@@ -118,7 +188,7 @@ const String debugSdkJs = '''
         } catch (e) {
             sendToFlutter('network', {
                 type: 'fetch', url: url, method: method, status: 0,
-                duration: Date.now() - startTime, requestBody: requestBody, error: String(e)
+                duration: Date.now() - startTime, requestBody: requestBody, requestHeaders: requestHeaders, error: String(e)
             });
             throw e;
         }
@@ -127,29 +197,46 @@ const String debugSdkJs = '''
     // 5. Hook Network Requests (XHR)
     const originalXHROpen = XMLHttpRequest.prototype.open;
     const originalXHRSend = XMLHttpRequest.prototype.send;
+    const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+        try { this._requestHeaders[String(name).toLowerCase()] = String(value); } catch (e) { }
+        return originalSetRequestHeader.apply(this, arguments);
+    };
     XMLHttpRequest.prototype.open = function(method, url) {
         this._requestMethod = method;
         this._requestUrl = url;
+        this._requestHeaders = {};
         return originalXHROpen.apply(this, arguments);
     };
     XMLHttpRequest.prototype.send = function(body) {
         const xhr = this;
-        const mockBody = findMock(xhr._requestUrl);
-        if (mockBody !== null) {
-            console.warn('[Mocked XHR] ' + xhr._requestUrl);
-            Object.defineProperty(xhr, 'status', { value: 200, configurable: true });
-            Object.defineProperty(xhr, 'statusText', { value: 'OK', configurable: true });
-            Object.defineProperty(xhr, 'responseText', { value: mockBody, configurable: true });
-            Object.defineProperty(xhr, 'response', { value: mockBody, configurable: true });
+        const sendArgs = arguments;
+        const net = window._netConfig || {};
+        if (net.offline) {
+            sendToFlutter('network', { type: 'xhr', url: xhr._requestUrl, method: (xhr._requestMethod || 'GET').toUpperCase(), status: 0, duration: 0, requestBody: typeof body === 'string' ? clip(body) : null, requestHeaders: xhr._requestHeaders, error: 'Simulated offline' });
+            setTimeout(function () {
+                xhr.dispatchEvent(new ProgressEvent('error'));
+                xhr.dispatchEvent(new ProgressEvent('loadend'));
+            }, 0);
+            return;
+        }
+        const xhrMethod = (xhr._requestMethod || 'GET').toUpperCase();
+        const mock = findMock(xhr._requestUrl, xhrMethod);
+        if (mock) {
+            console.warn('[Mocked XHR] ' + xhrMethod + ' ' + xhr._requestUrl + ' -> ' + mock.status);
+            Object.defineProperty(xhr, 'status', { value: mock.status, configurable: true });
+            Object.defineProperty(xhr, 'statusText', { value: 'Mocked', configurable: true });
+            Object.defineProperty(xhr, 'responseText', { value: mock.body, configurable: true });
+            Object.defineProperty(xhr, 'response', { value: mock.body, configurable: true });
             Object.defineProperty(xhr, 'readyState', { value: 4, configurable: true });
-            sendToFlutter('network', { type: 'xhr', url: xhr._requestUrl, method: (xhr._requestMethod || 'GET').toUpperCase(), status: 200, duration: 0, requestBody: body ? clip(body) : null, responseBody: clip(mockBody) });
-            // Fire asynchronously, like a real request, so both on* handlers
-            // and addEventListener listeners run.
+            xhr.getAllResponseHeaders = function () { return 'content-type: ' + mock.contentType + '\\r\\nx-debug-mock: 1\\r\\n'; };
+            xhr.getResponseHeader = function (n) { n = String(n).toLowerCase(); return n === 'content-type' ? mock.contentType : (n === 'x-debug-mock' ? '1' : null); };
+            sendToFlutter('network', { type: 'xhr', url: xhr._requestUrl, method: xhrMethod, status: mock.status, duration: (net.latency || 0) + mock.delay, requestBody: typeof body === 'string' ? clip(body) : null, requestHeaders: xhr._requestHeaders, responseHeaders: { 'content-type': mock.contentType, 'x-debug-mock': '1' }, responseBody: clip(mock.body) });
             setTimeout(function () {
                 xhr.dispatchEvent(new Event('readystatechange'));
                 xhr.dispatchEvent(new ProgressEvent('load'));
                 xhr.dispatchEvent(new ProgressEvent('loadend'));
-            }, 0);
+            }, (net.latency || 0) + mock.delay);
             return;
         }
 
@@ -162,6 +249,8 @@ const String debugSdkJs = '''
                 method: (this._requestMethod || 'GET').toUpperCase(),
                 status: this.status,
                 duration: duration,
+                requestHeaders: this._requestHeaders,
+                responseHeaders: parseRawHeaders(this.getAllResponseHeaders()),
                 requestBody: typeof body === 'string' ? clip(body) : null,
                 responseBody: (this.responseType === '' || this.responseType === 'text') ? clip(this.responseText) : '[' + this.responseType + ' response]'
             });
@@ -174,9 +263,14 @@ const String debugSdkJs = '''
                 method: (this._requestMethod || 'GET').toUpperCase(),
                 status: 0,
                 duration: duration,
+                requestHeaders: this._requestHeaders,
                 error: 'XHR Error'
             });
         });
+        if (net.latency > 0) {
+            setTimeout(function () { originalXHRSend.apply(xhr, sendArgs); }, net.latency);
+            return;
+        }
         return originalXHRSend.apply(this, arguments);
     };
 
@@ -294,7 +388,7 @@ const String debugSdkJs = '''
                 text: el.innerText ? el.innerText.substring(0, 50) : ''
             };
             
-            sendToFlutter('dom_node', nodeInfo);
+            sendToFlutter('dom_node', (window.__dbg && window.__dbg.nodeDetails) ? window.__dbg.nodeDetails(el) : nodeInfo);
         };
         
         document.addEventListener('mousemove', window._inspectorMove, true);
