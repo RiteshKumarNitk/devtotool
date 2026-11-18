@@ -121,8 +121,13 @@ BridgeMessage? parseBridgeMessage(String raw) {
     case 'a11y':
     case 'find_result':
       return PageDataMessage(type as String, map);
+    case 'blob_download':
+      final data = map['href'];
+      if (data is! String || !data.startsWith('data:')) return null;
+      return BrowserActionMessage(type as String, map);
     case 'open_tab':
     case 'link_menu':
+    case 'download_link':
       final href = map['href'];
       // Only web links may open tabs from page content.
       if (href is! String || !(href.startsWith('http://') || href.startsWith('https://'))) return null;

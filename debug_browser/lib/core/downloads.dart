@@ -165,9 +165,11 @@ const _extForMime = {
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
 };
 
-/// Chooses a file name from the header, then the URL, then the MIME type.
-String suggestFileName(String url, String? contentDisposition, String? mimeType) {
+/// Chooses a file name from the header, then the page's suggestion
+/// (`<a download="…">`), then the URL, then the MIME type.
+String suggestFileName(String url, String? contentDisposition, String? mimeType, {String? suggested}) {
   var name = fileNameFromContentDisposition(contentDisposition);
+  if ((name == null || name.isEmpty) && suggested != null && suggested.trim().isNotEmpty) name = suggested.trim();
   if (name == null || name.isEmpty) {
     final segs = Uri.tryParse(url)?.pathSegments.where((s) => s.isNotEmpty).toList() ?? const [];
     name = segs.isNotEmpty ? Uri.decodeComponent(segs.last) : 'download';
@@ -235,10 +237,12 @@ class DownloadsNotifier extends Notifier<List<DownloadItem>> {
     String? userAgent,
     String? cookie,
     String? referer,
+    String? suggestedName,
+    bool force = false,
   }) async {
     final uri = Uri.tryParse(url);
     if (uri == null) return false;
-    if (uri.scheme == 'data') return _saveDataUri(uri);
+    if (uri.scheme == 'data') return _saveDataUri(uri, suggestedName);
     if (uri.scheme != 'http' && uri.scheme != 'https') return false;
 
     final id = 'd${DateTime.now().microsecondsSinceEpoch}_${_seq++}';
@@ -265,12 +269,12 @@ class DownloadsNotifier extends Notifier<List<DownloadItem>> {
 
     final cd = response.headers.value('content-disposition');
     final mime = response.headers.contentType?.mimeType;
-    if (response.statusCode < 400 && looksLikePage(mime, cd)) {
+    if (!force && response.statusCode < 400 && looksLikePage(mime, cd)) {
       client.close(force: true);
       return false;
     }
 
-    final fileName = suggestFileName(url, cd, mime);
+    final fileName = suggestFileName(url, cd, mime, suggested: suggestedName);
     final item = DownloadItem(
       id: id,
       url: url,
@@ -331,11 +335,11 @@ class DownloadsNotifier extends Notifier<List<DownloadItem>> {
     }
   }
 
-  Future<bool> _saveDataUri(Uri uri) async {
+  Future<bool> _saveDataUri(Uri uri, [String? suggestedName]) async {
     final data = uri.data;
     if (data == null) return false;
     final id = 'd${DateTime.now().microsecondsSinceEpoch}_${_seq++}';
-    final name = suggestFileName('', null, data.mimeType);
+    final name = suggestFileName('', null, data.mimeType, suggested: suggestedName);
     try {
       final dir = await downloadDir();
       final path = await _uniquePath(dir, name);

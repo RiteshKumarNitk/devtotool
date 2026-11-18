@@ -29,7 +29,10 @@ bool isBlankRgba(Uint8List rgba, {int tolerance = 6}) {
 
 /// Captures the visible page into the active tab's thumbnail. Never throws.
 Future<void> captureActiveTabThumbnail(WidgetRef ref) async {
-  final tabId = ref.read(tabsProvider).activeId;
+  final active = ref.read(tabsProvider).active;
+  // Private tabs leave no trace, not even an in-memory preview.
+  if (active.isPrivate) return;
+  final tabId = active.id;
   ui.Image? image;
   try {
     image = await ref

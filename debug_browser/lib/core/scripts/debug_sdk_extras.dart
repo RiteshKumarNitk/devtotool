@@ -408,6 +408,45 @@ const String debugSdkExtrasJs = r'''
         e.preventDefault();
         send('open_tab', { href: href });
     }, false);
+    // Downloads the WebView can't do natively: blob:/data: links and
+    // <a download>. blob/data are read here and sent as a data: URL.
+    const MAX_BLOB = 25 * 1024 * 1024;
+    function blobDownload(href, name) {
+        fetch(href).then(function (r) { return r.blob(); }).then(function (b) {
+            if (b.size > MAX_BLOB) {
+                console.warn('[Download] ' + (name || 'file') + ' is larger than 25 MB and cannot be saved from a blob: URL');
+                return;
+            }
+            const fr = new FileReader();
+            fr.onload = function () { send('blob_download', { href: fr.result, name: name || '', mime: b.type || '' }); };
+            fr.readAsDataURL(b);
+        }).catch(function (e) { console.warn('[Download] failed: ' + e); });
+    }
+    function handleDownloadAnchor(a) {
+        if (!a || !a.getAttribute) return false;
+        const raw = a.getAttribute('href') || '';
+        const isBlob = /^(blob|data):/i.test(raw);
+        if (!isBlob && !a.hasAttribute('download')) return false;
+        const name = a.getAttribute('download') || '';
+        if (isBlob) { blobDownload(a.href, name); return true; }
+        const href = absolute(raw);
+        if (!/^https?:/.test(href)) return false;
+        send('download_link', { href: href, name: name });
+        return true;
+    }
+    dbg.handleDownloadAnchor = handleDownloadAnchor;
+    document.addEventListener('click', function (e) {
+        if (e.defaultPrevented || e.button !== 0) return;
+        const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+        if (a && handleDownloadAnchor(a)) e.preventDefault();
+    }, true);
+    // Scripts often create a detached <a download> and call .click() on it.
+    const realAnchorClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+        if (!this.isConnected && handleDownloadAnchor(this)) return;
+        return realAnchorClick.apply(this, arguments);
+    };
+
     const realOpen = window.open;
     window.open = function (url, name, features) {
         const href = absolute(url || '');

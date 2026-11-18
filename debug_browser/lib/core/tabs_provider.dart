@@ -8,6 +8,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'browser_native.dart';
 import 'browser_settings.dart';
 import 'downloads.dart';
 import 'js_bridge.dart';
@@ -34,6 +35,9 @@ class BrowserTab {
   /// False for restored tabs that haven't been opened yet (lazy load).
   final bool loaded;
 
+  /// Private tab: separate cookie/storage profile, no history, not restored.
+  final bool isPrivate;
+
   const BrowserTab({
     required this.id,
     required this.url,
@@ -44,6 +48,7 @@ class BrowserTab {
     this.canGoForward = false,
     this.error,
     this.loaded = true,
+    this.isPrivate = false,
   });
 
   bool get isSecure => url.startsWith('https://');
@@ -69,6 +74,7 @@ class BrowserTab {
         canGoForward: canGoForward ?? this.canGoForward,
         error: error != null ? error() : this.error,
         loaded: loaded ?? this.loaded,
+        isPrivate: isPrivate,
       );
 }
 
@@ -102,6 +108,25 @@ class LinkMenuNotifier extends Notifier<LinkMenuRequest?> {
 
 final linkMenuProvider = NotifierProvider<LinkMenuNotifier, LinkMenuRequest?>(LinkMenuNotifier.new);
 
+/// A site (not our proxy) asked for HTTP authentication. Shown as a dialog.
+@immutable
+class AuthPrompt {
+  final String host;
+  final String? realm;
+  final void Function(String user, String password) proceed;
+  final void Function() cancel;
+  const AuthPrompt(this.host, this.realm, this.proceed, this.cancel);
+}
+
+class AuthPromptNotifier extends Notifier<AuthPrompt?> {
+  @override
+  AuthPrompt? build() => null;
+  void show(AuthPrompt p) => state = p;
+  void clear() => state = null;
+}
+
+final authPromptProvider = NotifierProvider<AuthPromptNotifier, AuthPrompt?>(AuthPromptNotifier.new);
+
 /// Schemes the WebView handles itself; anything else goes to another app.
 const _webSchemes = {'http', 'https', 'about', 'data', 'blob', 'javascript', 'file'};
 
@@ -129,6 +154,15 @@ class TabsNotifier extends Notifier<TabsState> {
 
   /// Notifies the UI that a download started (file name), for a snackbar.
   final downloadStarted = ValueNotifier<String?>(null);
+
+  /// User-facing message, e.g. private browsing unsupported on this device.
+  final notice = ValueNotifier<String?>(null);
+
+  /// Private tabs whose WebView isn't in the private profile yet: never load.
+  final Set<String> _awaitingProfile = {};
+
+  /// Times the proxy rejected the saved credentials (avoids an auth loop).
+  int _proxyAuthFailures = 0;
   int _seq = 0;
 
   Box? get _box => Hive.isBoxOpen(settingsBoxName) ? Hive.box(settingsBoxName) : null;
@@ -144,6 +178,10 @@ class TabsNotifier extends Notifier<TabsState> {
     ref.listen(geoOverrideProvider, (_, next) => _pushAll(_geoJs(next)));
     ref.listen(userAgentProvider, (_, __) => _applyUserAgents());
     ref.listen(browserSettingsProvider.select((s) => s.desktopMode), (_, __) => _applyUserAgents());
+    ref.listen(proxySettingsProvider, (_, next) => _applyProxy(next));
+    Future.microtask(() => _applyProxy(ref.read(proxySettingsProvider)));
+    // Wipe anything a crashed private session left behind.
+    BrowserNative.clearPrivateData();
 
     final restored = <BrowserTab>[];
     var activeIndex = 0;
@@ -174,15 +212,19 @@ class TabsNotifier extends Notifier<TabsState> {
 
   // ------------------------------------------------------------------ tabs
 
-  String newTab({String? url, bool activate = true}) {
+  String newTab({String? url, bool activate = true, bool private = false}) {
     if (state.tabs.length >= maxTabs) {
       // Reuse the oldest inactive tab rather than growing unbounded.
       final victim = state.tabs.firstWhere((t) => t.id != state.activeId);
       closeTab(victim.id);
     }
     final id = _newId();
-    final tab = BrowserTab(id: id, url: url ?? _settings.homepage, loaded: false);
+    final tab = BrowserTab(id: id, url: url ?? _settings.homepage, loaded: false, isPrivate: private);
     _controllers[id] = _createController(id);
+    if (private) {
+      _awaitingProfile.add(id);
+      _attachPrivateProfile(id);
+    }
     final tabs = [...state.tabs];
     // Like Chrome: open next to the current tab.
     tabs.insert(state.activeIndex + 1, tab);
@@ -199,7 +241,9 @@ class TabsNotifier extends Notifier<TabsState> {
     _controllers.remove(id)?.loadRequest(Uri.parse('about:blank'));
     _sdkActive.remove(id);
     _pendingNav.remove(id);
+    _awaitingProfile.remove(id);
     ref.read(tabThumbnailsProvider.notifier).remove(id);
+    final wasPrivate = state.tabs[i].isPrivate;
     if (tabs.isEmpty) {
       final fresh = BrowserTab(id: _newId(), url: _settings.homepage, loaded: false);
       _controllers[fresh.id] = _createController(fresh.id);
@@ -212,7 +256,18 @@ class TabsNotifier extends Notifier<TabsState> {
     } else {
       state = TabsState(tabs, state.activeId);
     }
+    if (wasPrivate && !state.tabs.any((t) => t.isPrivate)) {
+      // Last private tab closed: forget its cookies and site data.
+      BrowserNative.clearPrivateData();
+    }
     _persist();
+  }
+
+  /// Closes every private tab (and wipes private data).
+  void closePrivateTabs() {
+    for (final t in [...state.tabs]) {
+      if (t.isPrivate) closeTab(t.id);
+    }
   }
 
   void closeAll() {
@@ -241,7 +296,7 @@ class TabsNotifier extends Notifier<TabsState> {
 
   void _ensureLoaded(String id) {
     final tab = _tab(id);
-    if (tab == null) return;
+    if (tab == null || _awaitingProfile.contains(id)) return;
     if (id == state.activeId) {
       ref.read(webViewControllerProvider.notifier).setController(_controllers[id]!);
     }
@@ -317,9 +372,10 @@ class TabsNotifier extends Notifier<TabsState> {
   void _persist() {
     _box?.put(_storeKey, {
       'tabs': [
-        for (final t in state.tabs) {'url': t.url, 'title': t.title},
+        for (final t in state.tabs)
+          if (!t.isPrivate) {'url': t.url, 'title': t.title},
       ],
-      'active': state.activeIndex,
+      'active': state.tabs.where((t) => !t.isPrivate).toList().indexWhere((t) => t.id == state.activeId).clamp(0, 999),
     });
   }
 
@@ -358,6 +414,7 @@ class TabsNotifier extends Notifier<TabsState> {
           }
         },
         onPageFinished: (url) => _onPageFinished(id, url),
+        onHttpAuthRequest: (req) => _onHttpAuth(id, req),
         onWebResourceError: (e) {
           if (e.isForMainFrame != true) return;
           // -999/cancelled navigations aren't real errors.
@@ -419,6 +476,73 @@ class TabsNotifier extends Notifier<TabsState> {
     return NavigationDecision.prevent;
   }
 
+  Future<void> _attachPrivateProfile(String id) async {
+    final c = _controllers[id];
+    final ok = c != null && await BrowserNative.makePrivate(c);
+    if (!_controllers.containsKey(id)) return;
+    if (ok) {
+      _awaitingProfile.remove(id);
+      _ensureLoaded(id);
+    } else {
+      // Never fall back to a non-private WebView for a private tab.
+      notice.value = 'Private browsing needs Android System WebView 110 or newer. Update it from the Play Store.';
+      closeTab(id);
+    }
+  }
+
+  Future<void> _applyProxy(ProxySettings p) async {
+    final status = ref.read(proxyStatusProvider.notifier);
+    _proxyAuthFailures = 0;
+    if (!p.enabled || p.validate() != null) {
+      await BrowserNative.clearProxy();
+      status.set(ProxyStatus.off);
+      return;
+    }
+    if (!await BrowserNative.proxySupported()) {
+      status.set(ProxyStatus.unsupported);
+      return;
+    }
+    final ok = await BrowserNative.setProxy(p.rule, bypass: p.bypass);
+    status.set(ok ? ProxyStatus.active : ProxyStatus.failed);
+    if (ok) reload();
+  }
+
+  void _onHttpAuth(String id, HttpAuthRequest req) {
+    final proxy = ref.read(proxySettingsProvider);
+    final isProxy = proxy.enabled && req.host.toLowerCase() == proxy.host.trim().toLowerCase();
+    if (isProxy && proxy.hasCredentials && _proxyAuthFailures < 2) {
+      _proxyAuthFailures++;
+      req.onProceed(WebViewCredential(user: proxy.username, password: proxy.password));
+      return;
+    }
+    if (id != state.activeId) {
+      req.onCancel();
+      return;
+    }
+    ref.read(authPromptProvider.notifier).show(AuthPrompt(
+          req.host,
+          req.realm,
+          (u, p) => req.onProceed(WebViewCredential(user: u, password: p)),
+          req.onCancel,
+        ));
+  }
+
+  /// Explicit download (long-press "Download link", <a download>, blob:).
+  Future<void> downloadUrl(String url, {String? suggestedName, String? tabId}) async {
+    final id = tabId ?? state.activeId;
+    final ok = await ref.read(downloadsProvider.notifier).start(
+          url,
+          userAgent: await _controllers[id]?.getUserAgent(),
+          referer: _tab(id)?.url,
+          suggestedName: suggestedName,
+          force: true,
+        );
+    if (ok) {
+      final latest = ref.read(downloadsProvider);
+      downloadStarted.value = latest.isEmpty ? url : latest.first.fileName;
+    }
+  }
+
   Future<void> _startDownload(String id, String url) async {
     final c = _controllers[id];
     final tab = _tab(id);
@@ -462,7 +586,7 @@ class TabsNotifier extends Notifier<TabsState> {
     final fwd = await c.canGoForward();
     _patch(id, (t) => t.copyWith(url: url, title: title, isLoading: false, progress: 1, canGoBack: back, canGoForward: fwd));
     if (id == state.activeId) ref.read(currentPageProvider.notifier).set(url, title);
-    ref.read(historyProvider.notifier).record(url, title);
+    if (_tab(id)?.isPrivate != true) ref.read(historyProvider.notifier).record(url, title);
     _persist();
   }
 
@@ -471,7 +595,9 @@ class TabsNotifier extends Notifier<TabsState> {
     if (msg is BrowserActionMessage) {
       if (id != state.activeId) return;
       if (msg.kind == 'open_tab') {
-        newTab(url: msg.href);
+        newTab(url: msg.href, private: _tab(id)?.isPrivate ?? false);
+      } else if (msg.kind == 'blob_download' || msg.kind == 'download_link') {
+        downloadUrl(msg.href, suggestedName: '${msg.data['name'] ?? ''}', tabId: id);
       } else {
         ref.read(linkMenuProvider.notifier).show(msg.data);
       }

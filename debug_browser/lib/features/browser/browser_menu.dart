@@ -12,6 +12,7 @@ import '../../core/providers.dart';
 import '../../core/tabs_provider.dart';
 import '../../core/tool_providers.dart';
 import '../more/history_page.dart';
+import '../settings/proxy_page.dart';
 import '../settings/settings_page.dart';
 import 'bookmarks_page.dart';
 import 'downloads_page.dart';
@@ -57,6 +58,14 @@ void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback
                       onTap: () {
                         close();
                         tabs.newTab();
+                      },
+                    ),
+                    _Quick(
+                      icon: Icons.privacy_tip_outlined,
+                      label: 'Private tab',
+                      onTap: () {
+                        close();
+                        tabs.newTab(private: true);
                       },
                     ),
                     _Quick(
@@ -169,6 +178,18 @@ void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback
                   tabs.hardReload();
                   snack('Cache cleared & reloaded');
                 },
+              ),
+              ListTile(
+                leading: Icon(Icons.vpn_lock_outlined,
+                    color: ref.watch(proxyStatusProvider) == ProxyStatus.active ? Colors.green : null),
+                title: const Text('Proxy / VPN'),
+                subtitle: Text(switch (ref.watch(proxyStatusProvider)) {
+                  ProxyStatus.active => 'On: ${ref.watch(proxySettingsProvider).host}',
+                  ProxyStatus.unsupported => 'Not supported by this WebView',
+                  ProxyStatus.failed => 'Could not apply. Check settings',
+                  ProxyStatus.off => 'Off',
+                }),
+                onTap: () => push(const ProxyPage()),
               ),
               ListTile(
                 leading: const Icon(Icons.settings_outlined),

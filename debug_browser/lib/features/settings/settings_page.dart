@@ -7,6 +7,7 @@ import '../../core/js_bridge.dart';
 import '../../core/providers.dart';
 import '../../core/tabs_provider.dart';
 import '../../core/tool_providers.dart';
+import 'proxy_page.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -135,6 +136,14 @@ class SettingsPage extends ConsumerWidget {
           ),
           header('Privacy'),
           ListTile(
+            leading: const Icon(Icons.vpn_lock_outlined),
+            title: const Text('Proxy / VPN'),
+            subtitle: Text(ref.watch(proxyStatusProvider) == ProxyStatus.active
+                ? 'On: ${ref.watch(proxySettingsProvider).host}'
+                : "Route browsing through your VPN provider's proxy"),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ProxyPage())),
+          ),
+          ListTile(
             leading: const Icon(Icons.delete_outline),
             title: const Text('Clear browsing data'),
             subtitle: const Text('History, cookies, cache'),
@@ -160,7 +169,7 @@ class SettingsPage extends ConsumerWidget {
           const AboutListTile(
             icon: Icon(Icons.info_outline),
             applicationName: 'Debug Browser',
-            applicationVersion: '1.4.0',
+            applicationVersion: '1.5.0',
             applicationLegalese: '© InnovateX Technology',
             aboutBoxChildren: [
               SizedBox(height: 12),

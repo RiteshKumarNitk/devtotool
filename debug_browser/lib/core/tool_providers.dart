@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart' show DateUtils;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -192,6 +193,49 @@ class HistoryNotifier extends Notifier<List<Map<String, String>>> {
     state = [];
     _box()?.delete(_key);
   }
+
+  /// Deletes one visit (matched by URL and time).
+  void remove(Map<String, String> entry) {
+    state = state.where((e) => !(e['url'] == entry['url'] && e['time'] == entry['time'])).toList();
+    _box()?.put(_key, state);
+  }
+
+  /// Deletes visits on or after [since] ("last hour", "today").
+  void clearSince(DateTime since) {
+    state = state.where((e) {
+      final t = DateTime.tryParse(e['time'] ?? '');
+      return t != null && t.isBefore(since);
+    }).toList();
+    _box()?.put(_key, state);
+  }
+}
+
+/// Groups history (newest first) under "Today", "Yesterday" or a date label.
+List<(String, List<Map<String, String>>)> groupHistoryByDay(
+  List<Map<String, String>> entries, {
+  DateTime? now,
+  String Function(DateTime day)? formatDay,
+}) {
+  final today = DateUtils.dateOnly(now ?? DateTime.now());
+  final groups = <(String, List<Map<String, String>>)>[];
+  String? currentLabel;
+  for (final e in entries.reversed) {
+    final t = DateTime.tryParse(e['time'] ?? '')?.toLocal();
+    final day = t == null ? null : DateUtils.dateOnly(t);
+    final diff = day == null ? null : today.difference(day).inDays;
+    final label = switch (diff) {
+      null => 'Earlier',
+      0 => 'Today',
+      1 => 'Yesterday',
+      _ => formatDay?.call(day!) ?? '${day!.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}',
+    };
+    if (label != currentLabel) {
+      groups.add((label, []));
+      currentLabel = label;
+    }
+    groups.last.$2.add(e);
+  }
+  return groups;
 }
 
 final historyProvider =

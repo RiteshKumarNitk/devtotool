@@ -8,8 +8,12 @@ A Flutter mobile browser with built-in developer tools, for debugging web pages 
 |---|---|
 | **Browser** | Chrome/Firefox-style: opens to Google (or your homepage). Address bar with padlock/site info, suggestions from bookmarks and history, and your choice of search engine (Google, DuckDuckGo, Bing, Brave). Bottom toolbar: back, forward, home, tabs, menu. |
 | **Tabs** | Multiple tabs with a tab switcher showing page previews (swipe to close, close all); restored on restart and loaded lazily. Links with `target=_blank` and `window.open` open new tabs; long-press a link for open in new/background tab, copy, share. |
+| **Private tabs** | Chrome-style private browsing: a separate WebView profile with its own cookies and site data (Android System WebView 110+), no history, not restored, no previews; all private data is wiped when the last private tab closes. Dark private theme; separate section in the tab switcher. On older WebViews private tabs are refused rather than silently shared. |
+| **Proxy / VPN** | Route all browser traffic through your VPN provider's HTTP, HTTPS or SOCKS5 proxy (paste `user:pass@host:port`), with bypass list, HTTP proxy sign-in and a "Check my IP" button. Uses WebView proxy override: only this browser is affected, it is not a system VPN, and the app provides no servers. |
+| **History** | Grouped by day, search, swipe to delete, clear last hour / today / all time, open in new or private tab. |
+| **Site sign-in** | Pages that require HTTP authentication show a username/password dialog. |
 | **Menu** | New tab, bookmark, share, reload, history, bookmarks, find in page, desktop site, copy link, screenshot, **Developer tools**, hard reload, settings. |
-| **Downloads** | Files the page serves as downloads (PDFs, APKs, archives, `data:` URLs) are saved with progress, cancel, retry, open, share and delete. On Android 10+ finished files go to the phone's shared **Downloads** folder (MediaStore; no storage permission) and open in their default app. File names come from `Content-Disposition` (RFC 6266) or the URL and are sanitised. |
+| **Downloads** | Files the page serves as downloads (PDFs, APKs, archives), `<a download>` links, script-generated `blob:`/`data:` files (up to 25 MB) and long-press "Download link / image" are saved with progress, cancel, retry, open, share and delete. On Android 10+ finished files go to the phone's shared **Downloads** folder (MediaStore; no storage permission) and open in their default app. File names come from `Content-Disposition` (RFC 6266) or the URL and are sanitised. |
 | **Find in page** | Highlights all matches with a match count and next/previous. |
 | **Other apps** | `tel:`, `mailto:`, `sms:`, maps, Play Store and `intent://` links open the right app (or the intent's fallback URL). |
 | **Settings** | Search engine, homepage, reopen tabs, theme, clear browsing data, floating debug bubble on/off. |
@@ -83,6 +87,6 @@ flutter run
 - Headers that browsers hide from JavaScript (`Set-Cookie`, most cross-origin response headers) are not visible, and HttpOnly cookies are not listed.
 - The geolocation override applies to calls made after the page loads.
 - Developer tools show the active tab only; background tabs are not recorded.
-- No private/incognito mode: Android WebView shares cookies across tabs.
-- Downloads use the page's readable cookies only; files behind HttpOnly-cookie logins may fail. `blob:` downloads aren't supported. On Android 7–9 files stay in the app's folder (`Android/data/<app>/files/Download`) and open via the share sheet.
+- Proxy sign-in works for HTTP/HTTPS proxies only (Android WebView can't authenticate to SOCKS5). The proxy password is stored unencrypted in the app's private storage.
+- Downloads use the page's readable cookies only; files behind HttpOnly-cookie logins may fail. On Android 7–9 files stay in the app's folder (`Android/data/<app>/files/Download`) and open via the share sheet.
 - Screenshots of the WebView can come out blank on some Android devices (platform-view limitation).

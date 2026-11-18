@@ -66,3 +66,8 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // WebView Profile (private tabs) and ProxyController (proxy/VPN) APIs.
+    implementation("androidx.webkit:webkit:1.15.0")
+}
