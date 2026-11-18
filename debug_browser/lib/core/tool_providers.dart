@@ -1,13 +1,14 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:screenshot/screenshot.dart';
 
 import 'providers.dart';
+import 'tabs_provider.dart';
 
 Box? _box() => Hive.isBoxOpen(settingsBoxName) ? Hive.box(settingsBoxName) : null;
 
@@ -55,7 +56,10 @@ class CurrentPageNotifier extends Notifier<CurrentPage> {
 final currentPageProvider =
     NotifierProvider<CurrentPageNotifier, CurrentPage>(CurrentPageNotifier.new);
 
-/// Bottom-navigation tab indices.
+/// Root navigator, so non-widget code can switch between browser and dev tools.
+final appNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Screens: [browser] is the browser itself; the rest are Developer-tools tabs.
 abstract final class AppTab {
   static const browser = 0;
   static const console = 1;
@@ -66,20 +70,34 @@ abstract final class AppTab {
   static const more = 6;
 }
 
+/// Selecting [AppTab.browser] closes Developer tools; any other tab opens
+/// Developer tools on that panel.
 class HomeTabNotifier extends Notifier<int> {
+  /// Set by the browser shell: pushes the Developer-tools route.
+  static void Function()? openDevToolsRoute;
+  static bool devToolsOpen = false;
+
   @override
   int build() => AppTab.browser;
-  void select(int index) => state = index;
+
+  void select(int index) {
+    if (index == AppTab.browser) {
+      state = AppTab.browser;
+      appNavigatorKey.currentState?.popUntil((r) => r.isFirst);
+      return;
+    }
+    state = index;
+    if (!devToolsOpen) openDevToolsRoute?.call();
+  }
 }
 
 final homeTabProvider = NotifierProvider<HomeTabNotifier, int>(HomeTabNotifier.new);
 
-/// Opens [url] in the browser tab. Returns false if the WebView isn't ready.
+/// Opens [url] in the current browser tab and shows the browser.
 bool openInBrowser(WidgetRef ref, String url) {
-  final controller = ref.read(webViewControllerProvider);
   final uri = Uri.tryParse(url);
-  if (controller == null || uri == null) return false;
-  controller.loadRequest(uri);
+  if (uri == null || url.isEmpty) return false;
+  ref.read(tabsProvider.notifier).loadUri(uri);
   ref.read(homeTabProvider.notifier).select(AppTab.browser);
   return true;
 }

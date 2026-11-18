@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'core/theme/app_theme.dart';
 import 'core/providers.dart';
+import 'core/tool_providers.dart';
 import 'features/browser/home_page.dart';
 
 Future<void> main() async {
@@ -48,6 +49,7 @@ class DebugBrowserApp extends ConsumerWidget {
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: themeMode,
+      navigatorKey: appNavigatorKey,
       home: const HomePage(),
       debugShowCheckedModeBanner: false,
     );

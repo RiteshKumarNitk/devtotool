@@ -319,6 +319,103 @@ const String debugSdkExtrasJs = r'''
     };
 
     // ---------------------------------------------------------------
+    // Find in page: wraps matches in <mark>, reports {count, index}
+    // ---------------------------------------------------------------
+    const FIND_CLASS = '__dbg-find';
+    let findMarks = [];
+    let findIndex = -1;
+    dbg.findClear = function () {
+        findMarks.forEach(function (m) {
+            const parent = m.parentNode;
+            if (!parent) return;
+            parent.replaceChild(document.createTextNode(m.textContent), m);
+            parent.normalize();
+        });
+        findMarks = [];
+        findIndex = -1;
+    };
+    function paintActive() {
+        findMarks.forEach(function (m, i) {
+            m.style.background = i === findIndex ? '#ff9632' : '#ffff00';
+            m.style.color = '#000';
+        });
+        const cur = findMarks[findIndex];
+        if (cur) { try { cur.scrollIntoView({ block: 'center' }); } catch (e) { } }
+        send('find_result', { count: findMarks.length, index: findIndex });
+    }
+    dbg.find = function (term) {
+        dbg.findClear();
+        term = String(term || '');
+        if (!term) { send('find_result', { count: 0, index: -1 }); return; }
+        const needle = term.toLowerCase();
+        const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT, {
+            acceptNode: function (n) {
+                const p = n.parentElement;
+                if (!p || /^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA|INPUT)$/.test(p.tagName)) return NodeFilter.FILTER_REJECT;
+                return n.nodeValue.toLowerCase().indexOf(needle) >= 0 ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+            }
+        });
+        const nodes = [];
+        while (walker.nextNode() && nodes.length < 2000) nodes.push(walker.currentNode);
+        nodes.forEach(function (node) {
+            let text = node.nodeValue;
+            const frag = document.createDocumentFragment();
+            let pos = 0, i;
+            while ((i = text.toLowerCase().indexOf(needle, pos)) >= 0 && findMarks.length < 1000) {
+                if (i > pos) frag.appendChild(document.createTextNode(text.substring(pos, i)));
+                const mark = document.createElement('mark');
+                mark.className = FIND_CLASS;
+                mark.textContent = text.substr(i, term.length);
+                frag.appendChild(mark);
+                findMarks.push(mark);
+                pos = i + term.length;
+            }
+            if (pos < text.length) frag.appendChild(document.createTextNode(text.substring(pos)));
+            node.parentNode.replaceChild(frag, node);
+        });
+        findIndex = findMarks.length ? 0 : -1;
+        paintActive();
+    };
+    dbg.findStep = function (delta) {
+        if (!findMarks.length) return;
+        findIndex = (findIndex + delta + findMarks.length) % findMarks.length;
+        paintActive();
+    };
+
+    // ---------------------------------------------------------------
+    // Tabs: long-press link menu, target=_blank and window.open
+    // ---------------------------------------------------------------
+    function absolute(u) { try { return new URL(u, location.href).href; } catch (e) { return ''; } }
+    document.addEventListener('contextmenu', function (e) {
+        const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+        const img = e.target && e.target.closest ? e.target.closest('img[src]') : null;
+        if (!a && !img) return;
+        e.preventDefault();
+        send('link_menu', {
+            href: a ? absolute(a.getAttribute('href')) : absolute(img.getAttribute('src')),
+            text: a ? (a.innerText || a.textContent || '').trim().substring(0, 120) : (img.alt || ''),
+            image: img ? absolute(img.getAttribute('src')) : ''
+        });
+    }, true);
+    document.addEventListener('click', function (e) {
+        if (e.defaultPrevented || e.button !== 0) return;
+        const a = e.target && e.target.closest ? e.target.closest('a[href][target]') : null;
+        if (!a) return;
+        const target = (a.getAttribute('target') || '').toLowerCase();
+        if (target !== '_blank') return;
+        const href = absolute(a.getAttribute('href'));
+        if (!/^https?:/.test(href)) return;
+        e.preventDefault();
+        send('open_tab', { href: href });
+    }, false);
+    const realOpen = window.open;
+    window.open = function (url, name, features) {
+        const href = absolute(url || '');
+        if (/^https?:/.test(href)) { send('open_tab', { href: href }); return null; }
+        return realOpen ? realOpen.apply(window, arguments) : null;
+    };
+
+    // ---------------------------------------------------------------
     // Geolocation override
     // ---------------------------------------------------------------
     const realGeo = navigator.geolocation;

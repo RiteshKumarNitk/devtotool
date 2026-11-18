@@ -119,14 +119,30 @@ BridgeMessage? parseBridgeMessage(String raw) {
     case 'vitals':
     case 'dom_tree':
     case 'a11y':
+    case 'find_result':
       return PageDataMessage(type as String, map);
+    case 'open_tab':
+    case 'link_menu':
+      final href = map['href'];
+      // Only web links may open tabs from page content.
+      if (href is! String || !(href.startsWith('http://') || href.startsWith('https://'))) return null;
+      return BrowserActionMessage(type as String, map);
   }
   return null;
 }
 
+/// Page-initiated browser actions: 'open_tab' (target=_blank / window.open)
+/// and 'link_menu' (long-press on a link or image).
+class BrowserActionMessage extends BridgeMessage {
+  final String kind;
+  final Map<String, dynamic> data;
+  const BrowserActionMessage(this.kind, this.data);
+  String get href => data['href'] as String;
+}
+
 /// Normalises user input from the address bar into a loadable URI.
-/// Bare words become a search query.
-Uri normaliseUrlInput(String input) {
+/// Bare words become a query for [search] (Google by default).
+Uri normaliseUrlInput(String input, {Uri Function(String query)? search}) {
   final text = input.trim();
   if (text.isEmpty) return Uri.parse('about:blank');
   final hasScheme = RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(text) ||
@@ -140,5 +156,5 @@ Uri normaliseUrlInput(String input) {
         RegExp(r'^(\d{1,3}\.){3}\d{1,3}').hasMatch(text);
     return Uri.parse('${isLocal ? 'http' : 'https'}://$text');
   }
-  return Uri.https('www.google.com', '/search', {'q': text});
+  return search?.call(text) ?? Uri.https('www.google.com', '/search', {'q': text});
 }

@@ -1,49 +1,27 @@
 import 'package:flutter/material.dart';
 
+/// Material 3 themes generated from one seed colour, so every surface tone
+/// (address bar, tab cards, sheets) is defined and consistent.
 class AppTheme {
-  static ThemeData get darkTheme {
-    return ThemeData.dark(useMaterial3: true).copyWith(
-      colorScheme: const ColorScheme.dark(
-        primary: Colors.blueAccent,
-        secondary: Colors.tealAccent,
-        surface: Color(0xFF1E1E2C),
-        background: Color(0xFF12121D),
-        error: Colors.redAccent,
-      ),
-      scaffoldBackgroundColor: const Color(0xFF12121D),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: Color(0xFF1E1E2C),
+  static const _seed = Color(0xFF1A73E8); // browser blue
+
+  static ThemeData _build(Brightness brightness) {
+    final scheme = ColorScheme.fromSeed(seedColor: _seed, brightness: brightness);
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: scheme,
+      scaffoldBackgroundColor: scheme.surface,
+      appBarTheme: AppBarTheme(
+        backgroundColor: scheme.surface,
+        foregroundColor: scheme.onSurface,
         elevation: 0,
+        scrolledUnderElevation: 1,
       ),
-      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-        backgroundColor: Color(0xFF1E1E2C),
-        selectedItemColor: Colors.blueAccent,
-        unselectedItemColor: Colors.grey,
-        type: BottomNavigationBarType.fixed,
-      ),
+      bottomSheetTheme: const BottomSheetThemeData(showDragHandle: true),
+      snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
     );
   }
 
-  static ThemeData get lightTheme {
-    return ThemeData.light(useMaterial3: true).copyWith(
-      colorScheme: const ColorScheme.light(
-        primary: Colors.blueAccent,
-        secondary: Colors.teal,
-        surface: Colors.white,
-        error: Colors.redAccent,
-      ),
-      scaffoldBackgroundColor: const Color(0xFFF5F5F5),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        elevation: 0,
-      ),
-      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-        backgroundColor: Colors.white,
-        selectedItemColor: Colors.blueAccent,
-        unselectedItemColor: Colors.grey,
-        type: BottomNavigationBarType.fixed,
-      ),
-    );
-  }
+  static ThemeData get darkTheme => _build(Brightness.dark);
+  static ThemeData get lightTheme => _build(Brightness.light);
 }

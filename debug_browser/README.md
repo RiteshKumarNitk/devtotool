@@ -6,8 +6,14 @@ A Flutter mobile browser with built-in developer tools, for debugging web pages 
 
 | Area | What it does |
 |---|---|
-| **Browser** | Address bar (URL or search), back/forward/reload, bookmarks and history (persisted), User-Agent presets, hard reload, screenshot, session export. Android back goes back in the page. |
-| **Floating debug bubble** | Draggable bubble over the page showing live error/request counts; opens Console, Network, Performance or a bug report in one tap. An orange ring means network throttling is on. |
+| **Browser** | Chrome/Firefox-style: opens to Google (or your homepage). Address bar with padlock/site info, suggestions from bookmarks and history, and your choice of search engine (Google, DuckDuckGo, Bing, Brave). Bottom toolbar: back, forward, home, tabs, menu. |
+| **Tabs** | Multiple tabs with a tab switcher (swipe to close, close all); restored on restart and loaded lazily. Links with `target=_blank` and `window.open` open new tabs; long-press a link for open in new/background tab, copy, share. |
+| **Menu** | New tab, bookmark, share, reload, history, bookmarks, find in page, desktop site, copy link, screenshot, **Developer tools**, hard reload, settings. |
+| **Find in page** | Highlights all matches with a match count and next/previous. |
+| **Other apps** | `tel:`, `mailto:`, `sms:`, maps, Play Store and `intent://` links open the right app (or the intent's fallback URL). |
+| **Settings** | Search engine, homepage, reopen tabs, theme, clear browsing data, floating debug bubble on/off. |
+| **Developer tools** | Opened from the menu or the bubble, never shown in the footer. Panels below. |
+| **Floating debug bubble** | Draggable bubble over the page showing live error/request counts; opens Console, Network, Performance or a bug report. An orange ring means network throttling is on. Can be turned off in Settings. |
 | **Console** | Captures `console.*`, uncaught errors and rejections. Level filters with counts, search, JSON shown as an expandable tree, copy all. JS REPL with command history. |
 | **JS snippets** | Saved scripts (starter set included) you can run against the page in one tap. |
 | **Network** | `fetch`/XHR with method, status, timing, request/response headers and bodies (text only, truncated at 100 KB). Filter by text, type and status class. Copy as cURL / fetch, HAR export. |
@@ -32,6 +38,8 @@ A Flutter mobile browser with built-in developer tools, for debugging web pages 
 lib/
   core/
     providers.dart          Core state: console/network buffers, mock rules, theme, bookmarks
+    browser_settings.dart   Search engine, homepage, desktop mode, bubble
+    tabs_provider.dart      Tab engine: one WebView per tab, bridge, external links
     tool_providers.dart     Tools state: tabs, page data, emulation, history, environments,
                             snippets, saved sessions
     js_bridge.dart          Validated parsing of page messages + JS-safe string encoding
@@ -73,5 +81,7 @@ flutter run
 - Only `fetch`/XHR traffic is captured, mocked and throttled. Images, CSS, scripts and navigations need native request interception.
 - Headers that browsers hide from JavaScript (`Set-Cookie`, most cross-origin response headers) are not visible, and HttpOnly cookies are not listed.
 - The geolocation override applies to calls made after the page loads.
-- One page at a time (no multiple tabs yet).
+- Developer tools show the active tab only; background tabs are not recorded.
+- No private/incognito mode: Android WebView shares cookies across tabs.
+- Downloads started by pages aren't handled yet.
 - Screenshots of the WebView can come out blank on some Android devices (platform-view limitation).
