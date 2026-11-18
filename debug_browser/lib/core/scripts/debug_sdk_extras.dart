@@ -455,6 +455,96 @@ const String debugSdkExtrasJs = r'''
     };
 
     // ---------------------------------------------------------------
+    // Reader mode: the main article in a clean, readable overlay
+    // ---------------------------------------------------------------
+    function textLen(el) { return (el.innerText || el.textContent || '').trim().length; }
+    function findArticle() {
+        const direct = document.querySelector('article, [role="main"] article, main article, [itemprop="articleBody"]');
+        if (direct && textLen(direct) > 400) return direct;
+        // Score blocks by the paragraph text they directly contain.
+        let best = null, bestScore = 0;
+        document.querySelectorAll('p').forEach(function (p) {
+            const parent = p.parentElement;
+            if (!parent) return;
+            const len = textLen(p);
+            if (len < 40) return;
+            parent.__dbgScore = (parent.__dbgScore || 0) + len;
+            if (parent.__dbgScore > bestScore) { bestScore = parent.__dbgScore; best = parent; }
+        });
+        // Include a wrapping container (e.g. with the article header), but
+        // never grow to the whole page.
+        const up = best && best.parentElement;
+        if (up && up !== document.body && up !== document.documentElement &&
+            textLen(up) < textLen(best) * 1.6) best = up;
+        return bestScore > 300 ? best : (document.querySelector('main') || null);
+    }
+    dbg.readerMode = function () {
+        const existing = document.getElementById('__dbg_reader');
+        if (existing) { existing.remove(); document.documentElement.style.overflow = ''; return; }
+        const src = findArticle();
+        if (!src) { alert('Reader mode: no article found on this page.'); return; }
+        const clone = src.cloneNode(true);
+        clone.querySelectorAll('script,style,noscript,iframe,form,button,input,select,textarea,nav,aside,footer,header,svg,canvas,video,audio,[aria-hidden="true"],ins,.adsbygoogle,[class*="share"],[class*="social"],[class*="related"],[id*="comments"]')
+            .forEach(function (n) { n.remove(); });
+        clone.querySelectorAll('*').forEach(function (n) {
+            n.removeAttribute('style'); n.removeAttribute('class'); n.removeAttribute('id');
+            if (n.tagName === 'A') n.setAttribute('target', '_self');
+            if (n.tagName === 'IMG') { const s = n.getAttribute('data-src') || n.getAttribute('src'); if (s) n.setAttribute('src', s); n.removeAttribute('srcset'); n.removeAttribute('loading'); }
+        });
+        // Prefer the article's own heading over the page's first <h1>
+        // (often a logo), and don't show it twice.
+        // Nearest heading: inside the article, then its ancestors, then page.
+        let h1 = null;
+        for (let n = src; n && !h1; n = n.parentElement) h1 = n.querySelector('h1');
+        h1 = h1 || document.querySelector('h1');
+        const h1Text = h1 ? (h1.innerText || h1.textContent || '').trim() : '';
+        const title = h1Text || (document.title || '').trim();
+        const dup = clone.querySelector('h1');
+        if (dup && (dup.innerText || dup.textContent || '').trim() === h1Text) dup.remove();
+        const words = textLen(clone) / 5.5;
+        const themes = { light: ['#ffffff', '#1f2328'], sepia: ['#f4ecd8', '#3b2f20'], dark: ['#1e1f22', '#e3e3e3'] };
+        let size = 19, theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        const root = document.createElement('div');
+        root.id = '__dbg_reader';
+        root.innerHTML =
+            '<div class="bar"><button data-a="close" aria-label="Close">✕</button><span></span>' +
+            '<button data-a="smaller" aria-label="Smaller text">A−</button><button data-a="bigger" aria-label="Bigger text">A+</button>' +
+            '<button data-a="theme" aria-label="Theme">◐</button></div><main><h1></h1><p class="meta"></p><div class="body"></div></main>';
+        root.querySelector('h1').textContent = title;
+        root.querySelector('.meta').textContent = location.hostname.replace(/^www\./, '') + ' · ' + Math.max(1, Math.round(words / 220)) + ' min read';
+        root.querySelector('.body').appendChild(clone);
+        const style = document.createElement('style');
+        root.appendChild(style);
+        function paint() {
+            const t = themes[theme];
+            style.textContent =
+                '#__dbg_reader{position:fixed;inset:0;z-index:2147483646;overflow-y:auto;background:' + t[0] + ';color:' + t[1] + ';-webkit-text-size-adjust:100%}' +
+                '#__dbg_reader .bar{position:sticky;top:0;display:flex;gap:6px;align-items:center;padding:8px 12px;background:' + t[0] + 'ee;border-bottom:1px solid ' + t[1] + '22;backdrop-filter:blur(6px)}' +
+                '#__dbg_reader .bar span{flex:1}' +
+                '#__dbg_reader button{all:unset;cursor:pointer;padding:6px 12px;border-radius:16px;border:1px solid ' + t[1] + '33;font:600 15px system-ui,sans-serif;color:' + t[1] + '}' +
+                '#__dbg_reader main{max-width:42rem;margin:0 auto;padding:16px 20px 64px;font:' + size + 'px/1.65 Georgia,"Noto Serif",serif}' +
+                '#__dbg_reader h1{font:700 1.6em/1.25 system-ui,sans-serif;margin:.4em 0}' +
+                '#__dbg_reader .meta{opacity:.65;font:14px system-ui,sans-serif;margin-bottom:1.5em}' +
+                '#__dbg_reader img,#__dbg_reader figure{max-width:100%!important;height:auto!important;margin:1em 0}' +
+                '#__dbg_reader a{color:inherit;text-decoration:underline}' +
+                '#__dbg_reader pre,#__dbg_reader code{white-space:pre-wrap;font-size:.85em}';
+        }
+        root.addEventListener('click', function (e) {
+            const a = e.target && e.target.getAttribute && e.target.getAttribute('data-a');
+            if (!a) return;
+            if (a === 'close') { root.remove(); document.documentElement.style.overflow = ''; return; }
+            if (a === 'smaller') size = Math.max(14, size - 2);
+            if (a === 'bigger') size = Math.min(30, size + 2);
+            if (a === 'theme') theme = theme === 'light' ? 'sepia' : theme === 'sepia' ? 'dark' : 'light';
+            paint();
+        });
+        paint();
+        document.documentElement.style.overflow = 'hidden';
+        document.body.appendChild(root);
+        root.scrollTop = 0;
+    };
+
+    // ---------------------------------------------------------------
     // Geolocation override
     // ---------------------------------------------------------------
     const realGeo = navigator.geolocation;

@@ -11,6 +11,7 @@ import '../../core/downloads.dart';
 import '../../core/providers.dart';
 import '../../core/tabs_provider.dart';
 import '../../core/tool_providers.dart';
+import '../extensions/extensions_page.dart';
 import '../more/history_page.dart';
 import '../settings/proxy_page.dart';
 import '../settings/settings_page.dart';
@@ -101,6 +102,20 @@ void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback
                 ),
               ),
               const Divider(),
+              ListTile(
+                leading: const Icon(Icons.extension_outlined),
+                title: const Text('Extensions'),
+                subtitle: const Text('Ad blocker, dark mode, user scripts'),
+                onTap: () => push(const ExtensionsPage()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.chrome_reader_mode_outlined),
+                title: const Text('Reader mode'),
+                onTap: () {
+                  close();
+                  tabs.toggleReaderMode();
+                },
+              ),
               ListTile(
                 leading: const Icon(Icons.history),
                 title: const Text('History'),

@@ -12,6 +12,8 @@ import '../../core/tabs_provider.dart';
 import '../../core/thumbnails.dart';
 import '../../core/tool_providers.dart';
 import '../devtools/devtools_page.dart';
+import '../../core/extensions.dart';
+import '../extensions/site_sheet.dart';
 import 'browser_menu.dart';
 import 'downloads_page.dart';
 import 'debug_bubble.dart';
@@ -474,6 +476,29 @@ final ThemeData privateTheme = ThemeData(
   snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
 );
 
+/// Shield with the number of blocked requests; opens per-site controls.
+class _ShieldButton extends ConsumerWidget {
+  final BrowserTab tab;
+  const _ShieldButton({required this.tab});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ext = ref.watch(extensionsProvider);
+    final on = ext.blockerOn(tab.url);
+    final n = tab.blockedCount;
+    return IconButton(
+      tooltip: on ? '$n blocked. Site settings' : 'Site settings',
+      onPressed: () => showSiteControls(context),
+      icon: Badge(
+        isLabelVisible: on && n > 0,
+        backgroundColor: Colors.green.shade700,
+        label: Text(n > 99 ? '99+' : '$n', style: const TextStyle(fontSize: 10)),
+        child: Icon(on ? Icons.shield : Icons.shield_outlined, size: 20, color: on ? Colors.green : null),
+      ),
+    );
+  }
+}
+
 class _WebArea extends ConsumerWidget {
   final BrowserTab tab;
   final WebViewController controller;
@@ -629,6 +654,7 @@ class _AddressBar extends ConsumerWidget {
                       onSubmitted: onSubmit,
                     ),
                   ),
+                  if (!editing) _ShieldButton(tab: tab),
                   if (editing)
                     IconButton(
                       tooltip: 'Clear',

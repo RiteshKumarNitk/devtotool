@@ -27,6 +27,22 @@ abstract final class BrowserNative {
     return _bool('setPrivateProfile', {'id': platform.webViewIdentifier});
   }
 
+  static Future<bool> startScriptSupported() => _bool('startScriptSupported');
+
+  /// Runs each script at document start in every frame of this WebView,
+  /// before the page's own scripts. Replaces previous ones; empty removes.
+  static Future<bool> setStartScripts(WebViewController controller, List<String> scripts) async {
+    final platform = controller.platform;
+    if (platform is! AndroidWebViewController) return false;
+    return _bool('setStartScripts', {'id': platform.webViewIdentifier, 'scripts': scripts});
+  }
+
+  static Future<bool> setTextZoom(WebViewController controller, int percent) async {
+    final platform = controller.platform;
+    if (platform is! AndroidWebViewController) return false;
+    return _bool('setTextZoom', {'id': platform.webViewIdentifier, 'percent': percent});
+  }
+
   static Future<bool> clearPrivateData() => _bool('clearPrivateData');
 
   static Future<bool> proxySupported() => _bool('proxySupported');

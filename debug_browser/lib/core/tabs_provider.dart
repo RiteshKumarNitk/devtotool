@@ -11,6 +11,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'browser_native.dart';
 import 'browser_settings.dart';
 import 'downloads.dart';
+import 'extensions.dart';
 import 'js_bridge.dart';
 import 'providers.dart';
 import 'scripts/debug_sdk_extras.dart';
@@ -38,6 +39,10 @@ class BrowserTab {
   /// Private tab: separate cookie/storage profile, no history, not restored.
   final bool isPrivate;
 
+  /// Requests blocked by the ad/tracker blocker on the current page.
+  final int blockedCount;
+  final Map<String, int> blockedDomains;
+
   const BrowserTab({
     required this.id,
     required this.url,
@@ -49,6 +54,8 @@ class BrowserTab {
     this.error,
     this.loaded = true,
     this.isPrivate = false,
+    this.blockedCount = 0,
+    this.blockedDomains = const {},
   });
 
   bool get isSecure => url.startsWith('https://');
@@ -63,6 +70,8 @@ class BrowserTab {
     bool? canGoForward,
     String? Function()? error,
     bool? loaded,
+    int? blockedCount,
+    Map<String, int>? blockedDomains,
   }) =>
       BrowserTab(
         id: id,
@@ -75,6 +84,8 @@ class BrowserTab {
         error: error != null ? error() : this.error,
         loaded: loaded ?? this.loaded,
         isPrivate: isPrivate,
+        blockedCount: blockedCount ?? this.blockedCount,
+        blockedDomains: blockedDomains ?? this.blockedDomains,
       );
 }
 
@@ -179,6 +190,8 @@ class TabsNotifier extends Notifier<TabsState> {
     ref.listen(userAgentProvider, (_, __) => _applyUserAgents());
     ref.listen(browserSettingsProvider.select((s) => s.desktopMode), (_, __) => _applyUserAgents());
     ref.listen(proxySettingsProvider, (_, next) => _applyProxy(next));
+    ref.listen(extensionsProvider, (prev, next) => _onExtensionsChanged(prev, next));
+    ref.listen(userScriptsProvider, (_, __) => _reapplyExtensions());
     Future.microtask(() => _applyProxy(ref.read(proxySettingsProvider)));
     // Wipe anything a crashed private session left behind.
     BrowserNative.clearPrivateData();
@@ -220,7 +233,9 @@ class TabsNotifier extends Notifier<TabsState> {
     }
     final id = _newId();
     final tab = BrowserTab(id: id, url: url ?? _settings.homepage, loaded: false, isPrivate: private);
+    if (private) _privatePending.add(id);
     _controllers[id] = _createController(id);
+    _privatePending.remove(id);
     if (private) {
       _awaitingProfile.add(id);
       _attachPrivateProfile(id);
@@ -243,6 +258,7 @@ class TabsNotifier extends Notifier<TabsState> {
     _pendingNav.remove(id);
     _awaitingProfile.remove(id);
     ref.read(tabThumbnailsProvider.notifier).remove(id);
+    _extReady.remove(id);
     final wasPrivate = state.tabs[i].isPrivate;
     if (tabs.isEmpty) {
       final fresh = BrowserTab(id: _newId(), url: _settings.homepage, loaded: false);
@@ -302,7 +318,8 @@ class TabsNotifier extends Notifier<TabsState> {
     }
     if (!tab.loaded) {
       _patch(id, (t) => t.copyWith(loaded: true));
-      _controllers[id]!.loadRequest(normaliseUrlInput(tab.url));
+      final ready = _extReady[id] ?? Future<void>.value();
+      ready.whenComplete(() => _controllers[id]?.loadRequest(normaliseUrlInput(tab.url)));
     }
   }
 
@@ -407,6 +424,8 @@ class TabsNotifier extends Notifier<TabsState> {
         onPageStarted: (url) {
           _sdkActive.remove(id);
           _pendingNav[id]?.clear();
+          _patch(id, (t) => t.copyWith(blockedCount: 0, blockedDomains: const {}));
+          _applyTextZoom(id, url);
           _patch(id, (t) => t.copyWith(url: url, isLoading: true, progress: 0.05, error: () => null));
           if (id == state.activeId) {
             ref.read(pageDataProvider.notifier).clear();
@@ -444,8 +463,74 @@ class TabsNotifier extends Notifier<TabsState> {
       });
     final ua = _userAgent();
     if (ua != null) c.setUserAgent(ua);
+    // Extensions must be registered before the first load. Private tabs do
+    // it after their profile is attached (see _attachPrivateProfile).
+    _controllers[id] = c;
+    if (!_awaitingProfile.contains(id) && !_privatePending.contains(id)) {
+      _extReady[id] = _applyExtensions(id);
+    }
     return c;
   }
+
+  // ------------------------------------------------------------ extensions
+
+  late final Future<bool> _startScriptsSupported = BrowserNative.startScriptSupported();
+
+  /// Completes when a tab's extension scripts are registered.
+  final Map<String, Future<void>> _extReady = {};
+
+  /// Private tabs being created: extensions wait for the profile.
+  final Set<String> _privatePending = {};
+
+  Future<void> _applyExtensions(String id) async {
+    final c = _controllers[id];
+    if (c == null || !await _startScriptsSupported) return;
+    await BrowserNative.setStartScripts(
+      c,
+      buildStartScripts(ref.read(extensionsProvider), ref.read(userScriptsProvider)),
+    );
+  }
+
+  Future<void> _reapplyExtensions() async {
+    for (final id in _controllers.keys.toList()) {
+      if (_awaitingProfile.contains(id)) continue;
+      await _applyExtensions(id);
+    }
+    reload();
+  }
+
+  void _onExtensionsChanged(ExtensionSettings? prev, ExtensionSettings next) {
+    final zoomOnly = prev != null &&
+        prev.blocker == next.blocker &&
+        prev.cosmetic == next.cosmetic &&
+        prev.dark == next.dark &&
+        prev.cookies == next.cookies &&
+        _sameExceptZoom(prev, next);
+    if (zoomOnly) {
+      _applyTextZoom(state.activeId, state.active.url);
+    } else {
+      _reapplyExtensions();
+    }
+  }
+
+  static bool _sameExceptZoom(ExtensionSettings a, ExtensionSettings b) {
+    final keys = {...a.sites.keys, ...b.sites.keys};
+    for (final k in keys) {
+      final x = a.sites[k], y = b.sites[k];
+      if (x?.blocker != y?.blocker || x?.dark != y?.dark || x?.cookies != y?.cookies) return false;
+    }
+    return true;
+  }
+
+  void _applyTextZoom(String id, String url) {
+    final c = _controllers[id];
+    if (c == null) return;
+    BrowserNative.setTextZoom(c, ref.read(extensionsProvider).textZoom(url));
+  }
+
+  /// Toggles reader mode on the current page.
+  void toggleReaderMode() =>
+      activeController.runJavaScript('window.__dbg && window.__dbg.readerMode && window.__dbg.readerMode()');
 
   NavigationDecision _onNavigationRequest(String id, NavigationRequest req) {
     final uri = Uri.tryParse(req.url);
@@ -481,6 +566,7 @@ class TabsNotifier extends Notifier<TabsState> {
     final ok = c != null && await BrowserNative.makePrivate(c);
     if (!_controllers.containsKey(id)) return;
     if (ok) {
+      _extReady[id] = _applyExtensions(id);
       _awaitingProfile.remove(id);
       _ensureLoaded(id);
     } else {
@@ -578,6 +664,12 @@ class TabsNotifier extends Notifier<TabsState> {
       await c.runJavaScript(_mocksJs(ref.read(networkMocksProvider)));
       await c.runJavaScript(_conditionJs(ref.read(networkConditionProvider)));
       await c.runJavaScript(_geoJs(ref.read(geoOverrideProvider)));
+      if (!await _startScriptsSupported) {
+        // Old WebView: inject late (after load). Blocking is weaker this way.
+        for (final js in buildStartScripts(ref.read(extensionsProvider), ref.read(userScriptsProvider))) {
+          await c.runJavaScript(js).catchError((Object _) {});
+        }
+      }
     } catch (e) {
       debugPrint('SDK injection failed: $e');
     }
@@ -592,6 +684,15 @@ class TabsNotifier extends Notifier<TabsState> {
 
   void _onBridgeMessage(String id, String raw) {
     final msg = parseBridgeMessage(raw);
+    if (msg is BlockedMessage) {
+      _patch(id, (t) {
+        final domains = Map<String, int>.from(t.blockedDomains);
+        msg.domains.forEach((d, n) => domains[d] = (domains[d] ?? 0) + n);
+        return t.copyWith(blockedCount: t.blockedCount + msg.count, blockedDomains: domains);
+      });
+      ref.read(blockedTotalProvider.notifier).add(msg.count);
+      return;
+    }
     if (msg is BrowserActionMessage) {
       if (id != state.activeId) return;
       if (msg.kind == 'open_tab') {
@@ -640,6 +741,15 @@ class TabsNotifier extends Notifier<TabsState> {
 }
 
 final tabsProvider = NotifierProvider<TabsNotifier, TabsState>(TabsNotifier.new);
+
+/// Requests blocked since the app started (all tabs).
+class BlockedTotalNotifier extends Notifier<int> {
+  @override
+  int build() => 0;
+  void add(int n) => state += n;
+}
+
+final blockedTotalProvider = NotifierProvider<BlockedTotalNotifier, int>(BlockedTotalNotifier.new);
 
 /// In-memory page previews for the tab switcher, keyed by tab id.
 class TabThumbnailsNotifier extends Notifier<Map<String, Uint8List>> {

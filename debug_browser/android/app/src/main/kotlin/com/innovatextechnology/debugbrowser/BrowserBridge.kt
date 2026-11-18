@@ -3,6 +3,7 @@ package com.innovatextechnology.debugbrowser
 import androidx.webkit.ProfileStore
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
+import androidx.webkit.ScriptHandler
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import io.flutter.embedding.engine.FlutterEngine
@@ -26,6 +27,9 @@ class BrowserBridge(private val engine: FlutterEngine) : MethodChannel.MethodCal
 
     private val direct = Executor { it.run() }
 
+    /** Current document-start scripts per WebView id (replaced on update). */
+    private val startScripts = mutableMapOf<Long, List<ScriptHandler>>()
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         try {
             when (call.method) {
@@ -34,6 +38,17 @@ class BrowserBridge(private val engine: FlutterEngine) : MethodChannel.MethodCal
                 "clearPrivateData" -> {
                     clearPrivateData()
                     result.success(true)
+                }
+                "startScriptSupported" ->
+                    result.success(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT))
+                "setStartScripts" -> result.success(
+                    setStartScripts(call.argument<Number>("id")!!.toLong(), call.argument<List<String>>("scripts") ?: emptyList())
+                )
+                "setTextZoom" -> {
+                    @Suppress("DEPRECATION")
+                    val wv = WebViewFlutterAndroidExternalApi.getWebView(engine, call.argument<Number>("id")!!.toLong())
+                    wv?.settings?.textZoom = call.argument<Number>("percent")!!.toInt().coerceIn(50, 300)
+                    result.success(wv != null)
                 }
                 "proxySupported" -> result.success(WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE))
                 "setProxy" -> setProxy(call, result)
@@ -54,6 +69,23 @@ class BrowserBridge(private val engine: FlutterEngine) : MethodChannel.MethodCal
         WebViewCompat.setProfile(webView, PRIVATE_PROFILE)
         // Only report success if the WebView really uses the private profile.
         return WebViewCompat.getProfile(webView).name == PRIVATE_PROFILE
+    }
+
+    /**
+     * Runs each script in every frame before the page's own scripts, on every
+     * navigation of this WebView. Each is registered separately, so a syntax
+     * error in one (e.g. a user script) can't break the others. Replaces any
+     * previous scripts; an empty list removes them.
+     */
+    @Suppress("DEPRECATION")
+    private fun setStartScripts(id: Long, scripts: List<String>): Boolean {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return false
+        startScripts.remove(id)?.forEach { it.remove() }
+        if (scripts.isEmpty()) return true
+        val webView = WebViewFlutterAndroidExternalApi.getWebView(engine, id) ?: return false
+        startScripts[id] = scripts.filter { it.isNotEmpty() }
+            .map { WebViewCompat.addDocumentStartJavaScript(webView, it, setOf("*")) }
+        return true
     }
 
     /** Wipes cookies, storage and permissions of the private profile. */

@@ -121,6 +121,15 @@ BridgeMessage? parseBridgeMessage(String raw) {
     case 'a11y':
     case 'find_result':
       return PageDataMessage(type as String, map);
+    case 'blocked':
+      final n = map['n'];
+      final domains = map['domains'];
+      if (n is! num) return null;
+      return BlockedMessage(n.toInt(), {
+        if (domains is Map)
+          for (final e in domains.entries)
+            if (e.value is num) '${e.key}': (e.value as num).toInt(),
+      });
     case 'blob_download':
       final data = map['href'];
       if (data is! String || !data.startsWith('data:')) return null;
@@ -134,6 +143,13 @@ BridgeMessage? parseBridgeMessage(String raw) {
       return BrowserActionMessage(type as String, map);
   }
   return null;
+}
+
+/// The extension blocker stopped [count] requests (delta since last report).
+class BlockedMessage extends BridgeMessage {
+  final int count;
+  final Map<String, int> domains;
+  const BlockedMessage(this.count, this.domains);
 }
 
 /// Page-initiated browser actions: 'open_tab' (target=_blank / window.open)
