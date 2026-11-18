@@ -9,6 +9,7 @@ import '../../core/browser_settings.dart';
 import '../../core/js_bridge.dart';
 import '../../core/providers.dart';
 import '../../core/tabs_provider.dart';
+import '../../core/thumbnails.dart';
 import '../../core/tool_providers.dart';
 import '../devtools/devtools_page.dart';
 import 'browser_menu.dart';
@@ -473,7 +474,13 @@ class _BottomBar extends ConsumerWidget {
               IconButton(tooltip: 'Home', icon: const Icon(Icons.home_outlined), onPressed: tabs.goHome),
               IconButton(
                 tooltip: 'Tabs',
-                onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TabSwitcherPage())),
+                onPressed: () async {
+                  // Preview of the current page for the switcher.
+                  await captureActiveTabThumbnail(ref);
+                  if (context.mounted) {
+                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TabSwitcherPage()));
+                  }
+                },
                 icon: Container(
                   width: 24,
                   height: 24,

@@ -198,6 +198,8 @@ class TabsNotifier extends Notifier<TabsState> {
     final tabs = [...state.tabs]..removeAt(i);
     _controllers.remove(id)?.loadRequest(Uri.parse('about:blank'));
     _sdkActive.remove(id);
+    _pendingNav.remove(id);
+    ref.read(tabThumbnailsProvider.notifier).remove(id);
     if (tabs.isEmpty) {
       final fresh = BrowserTab(id: _newId(), url: _settings.homepage, loaded: false);
       _controllers[fresh.id] = _createController(fresh.id);
@@ -512,3 +514,26 @@ class TabsNotifier extends Notifier<TabsState> {
 }
 
 final tabsProvider = NotifierProvider<TabsNotifier, TabsState>(TabsNotifier.new);
+
+/// In-memory page previews for the tab switcher, keyed by tab id.
+class TabThumbnailsNotifier extends Notifier<Map<String, Uint8List>> {
+  @override
+  Map<String, Uint8List> build() => {};
+
+  void put(String tabId, Uint8List png) => state = {...state, tabId: png};
+
+  void remove(String tabId) {
+    if (!state.containsKey(tabId)) return;
+    state = Map.of(state)..remove(tabId);
+  }
+
+  /// Drops previews of tabs that no longer exist.
+  void retain(Iterable<String> tabIds) {
+    final keep = tabIds.toSet();
+    if (state.keys.every(keep.contains)) return;
+    state = {for (final e in state.entries) if (keep.contains(e.key)) e.key: e.value};
+  }
+}
+
+final tabThumbnailsProvider =
+    NotifierProvider<TabThumbnailsNotifier, Map<String, Uint8List>>(TabThumbnailsNotifier.new);

@@ -160,7 +160,7 @@ class SettingsPage extends ConsumerWidget {
           const AboutListTile(
             icon: Icon(Icons.info_outline),
             applicationName: 'Debug Browser',
-            applicationVersion: '1.3.0',
+            applicationVersion: '1.4.0',
             applicationLegalese: '© InnovateX Technology',
             aboutBoxChildren: [
               SizedBox(height: 12),

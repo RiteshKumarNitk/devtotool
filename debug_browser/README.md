@@ -7,7 +7,7 @@ A Flutter mobile browser with built-in developer tools, for debugging web pages 
 | Area | What it does |
 |---|---|
 | **Browser** | Chrome/Firefox-style: opens to Google (or your homepage). Address bar with padlock/site info, suggestions from bookmarks and history, and your choice of search engine (Google, DuckDuckGo, Bing, Brave). Bottom toolbar: back, forward, home, tabs, menu. |
-| **Tabs** | Multiple tabs with a tab switcher (swipe to close, close all); restored on restart and loaded lazily. Links with `target=_blank` and `window.open` open new tabs; long-press a link for open in new/background tab, copy, share. |
+| **Tabs** | Multiple tabs with a tab switcher showing page previews (swipe to close, close all); restored on restart and loaded lazily. Links with `target=_blank` and `window.open` open new tabs; long-press a link for open in new/background tab, copy, share. |
 | **Menu** | New tab, bookmark, share, reload, history, bookmarks, find in page, desktop site, copy link, screenshot, **Developer tools**, hard reload, settings. |
 | **Downloads** | Files the page serves as downloads (PDFs, APKs, archives, `data:` URLs) are saved with progress, cancel, retry, open, share and delete. On Android 10+ finished files go to the phone's shared **Downloads** folder (MediaStore; no storage permission) and open in their default app. File names come from `Content-Disposition` (RFC 6266) or the URL and are sanitised. |
 | **Find in page** | Highlights all matches with a match count and next/previous. |

@@ -10,12 +10,15 @@ class TabSwitcherPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(tabsProvider);
+    final thumbs = ref.watch(tabThumbnailsProvider);
     final tabs = ref.read(tabsProvider.notifier);
     final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('${state.tabs.length} tab${state.tabs.length == 1 ? '' : 's'}'),
+        title: Text(
+          '${state.tabs.length} tab${state.tabs.length == 1 ? '' : 's'}',
+        ),
         actions: [
           PopupMenuButton<String>(
             onSelected: (v) async {
@@ -25,8 +28,14 @@ class TabSwitcherPage extends ConsumerWidget {
                   builder: (c) => AlertDialog(
                     title: const Text('Close all tabs?'),
                     actions: [
-                      TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
-                      FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Close all')),
+                      TextButton(
+                        onPressed: () => Navigator.pop(c, false),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(c, true),
+                        child: const Text('Close all'),
+                      ),
                     ],
                   ),
                 );
@@ -36,7 +45,9 @@ class TabSwitcherPage extends ConsumerWidget {
                 }
               }
             },
-            itemBuilder: (_) => const [PopupMenuItem(value: 'close_all', child: Text('Close all tabs'))],
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'close_all', child: Text('Close all tabs')),
+            ],
           ),
         ],
       ),
@@ -76,52 +87,98 @@ class TabSwitcherPage extends ConsumerWidget {
                 child: Container(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: active ? scheme.primary : Colors.transparent, width: 2.5),
+                    border: Border.all(
+                      color: active ? scheme.primary : Colors.transparent,
+                      width: 2.5,
+                    ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Padding(
                         padding: const EdgeInsets.fromLTRB(10, 4, 0, 4),
-                        child: Row(children: [
-                          Icon(t.isSecure ? Icons.lock_outline : Icons.public, size: 14),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(t.displayTitle,
-                                maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
-                          ),
-                          IconButton(
-                            tooltip: 'Close tab',
-                            visualDensity: VisualDensity.compact,
-                            icon: const Icon(Icons.close, size: 18),
-                            onPressed: () => tabs.closeTab(t.id),
-                          ),
-                        ]),
-                      ),
-                      Expanded(
-                        child: Container(
-                          color: scheme.surface,
-                          alignment: Alignment.center,
-                          padding: const EdgeInsets.all(12),
-                          child: Column(mainAxisSize: MainAxisSize.min, children: [
-                            CircleAvatar(
-                              radius: 22,
-                              backgroundColor: scheme.primaryContainer,
+                        child: Row(
+                          children: [
+                            Icon(
+                              t.isSecure ? Icons.lock_outline : Icons.public,
+                              size: 14,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
                               child: Text(
-                                host.replaceFirst('www.', '').isEmpty ? '?' : host.replaceFirst('www.', '')[0].toUpperCase(),
-                                style: TextStyle(fontSize: 20, color: scheme.onPrimaryContainer),
+                                t.displayTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
-                            const SizedBox(height: 10),
-                            Text(host, maxLines: 2, textAlign: TextAlign.center, overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-                            if (!t.loaded)
-                              const Padding(
-                                padding: EdgeInsets.only(top: 6),
-                                child: Text('Not loaded', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                              ),
-                          ]),
+                            IconButton(
+                              tooltip: 'Close tab',
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.close, size: 18),
+                              onPressed: () => tabs.closeTab(t.id),
+                            ),
+                          ],
                         ),
+                      ),
+                      Expanded(
+                        child: thumbs[t.id] != null
+                            ? Image.memory(
+                                thumbs[t.id]!,
+                                fit: BoxFit.cover,
+                                alignment: Alignment.topCenter,
+                                gaplessPlayback: true,
+                                filterQuality: FilterQuality.medium,
+                              )
+                            : Container(
+                                color: scheme.surface,
+                                alignment: Alignment.center,
+                                padding: const EdgeInsets.all(12),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 22,
+                                      backgroundColor: scheme.primaryContainer,
+                                      child: Text(
+                                        host.replaceFirst('www.', '').isEmpty
+                                            ? '?'
+                                            : host
+                                                  .replaceFirst('www.', '')[0]
+                                                  .toUpperCase(),
+                                        style: TextStyle(
+                                          fontSize: 20,
+                                          color: scheme.onPrimaryContainer,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      host,
+                                      maxLines: 2,
+                                      textAlign: TextAlign.center,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                    if (!t.loaded)
+                                      const Padding(
+                                        padding: EdgeInsets.only(top: 6),
+                                        child: Text(
+                                          'Not loaded',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
                       ),
                     ],
                   ),
