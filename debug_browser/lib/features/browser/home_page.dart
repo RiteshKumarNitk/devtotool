@@ -284,6 +284,70 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  /// Back pressed with no page history: ask instead of closing the app.
+  Future<void> _onBackAtStart() async {
+    final tabsState = ref.read(tabsProvider);
+    final tabs = ref.read(tabsProvider.notifier);
+    final settings = ref.read(browserSettingsProvider);
+    if (!settings.confirmExit) {
+      await SystemNavigator.pop();
+      return;
+    }
+    final multiple = tabsState.tabs.length > 1;
+    final private = tabsState.active.isPrivate;
+    var dontAsk = false;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, set) => AlertDialog(
+          icon: const Icon(Icons.exit_to_app),
+          title: const Text('Exit Debug Browser?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(multiple
+                  ? 'You have ${tabsState.tabs.length} open tabs. They will be here when you come back.'
+                  : 'Your tab will be here when you come back.'),
+              if (private)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text('Private tabs are closed and their data deleted when the app exits.',
+                      style: TextStyle(fontSize: 13)),
+                ),
+              const SizedBox(height: 8),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: dontAsk,
+                title: const Text('Don’t ask again'),
+                onChanged: (v) => set(() => dontAsk = v ?? false),
+              ),
+            ],
+          ),
+          actionsOverflowButtonSpacing: 4,
+          actions: [
+            if (multiple)
+              TextButton(onPressed: () => Navigator.pop(c, 'close_tab'), child: const Text('Close this tab')),
+            TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(c, 'exit'), child: const Text('Exit')),
+          ],
+        ),
+      ),
+    );
+    if (choice == null) return;
+    if (dontAsk && choice == 'exit') {
+      ref.read(browserSettingsProvider.notifier).update((s) => s.copyWith(confirmExit: false));
+    }
+    if (choice == 'close_tab') {
+      tabs.closeTab(tabsState.activeId);
+    } else if (choice == 'exit') {
+      if (private) tabs.closePrivateTabs();
+      await SystemNavigator.pop();
+    }
+  }
+
   void _snack(String t) {
     if (mounted) {
       ScaffoldMessenger.of(context)
@@ -318,7 +382,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         if (await c.canGoBack()) {
           await c.goBack();
         } else {
-          await SystemNavigator.pop();
+          await _onBackAtStart();
         }
       },
       // Private tabs get a dark "incognito" look, like Chrome.

@@ -31,6 +31,13 @@ void main() {
       expect(back.desktopMode, isFalse);
       expect(BrowserSettings.fromJson('junk').engine, SearchEngine.google);
     });
+
+    test('exit confirmation is on by default and persists when turned off', () {
+      expect(const BrowserSettings().confirmExit, isTrue);
+      expect(BrowserSettings.fromJson({}).confirmExit, isTrue);
+      final off = const BrowserSettings().copyWith(confirmExit: false);
+      expect(BrowserSettings.fromJson(jsonDecode(jsonEncode(off.toJson()))).confirmExit, isFalse);
+    });
   });
 
   group('page-initiated tab actions', () {

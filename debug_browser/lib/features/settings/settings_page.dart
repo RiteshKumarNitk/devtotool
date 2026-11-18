@@ -130,6 +130,13 @@ class SettingsPage extends ConsumerWidget {
             onChanged: (v) => notifier.update((x) => x.copyWith(restoreTabs: v)),
           ),
           SwitchListTile(
+            secondary: const Icon(Icons.exit_to_app),
+            title: const Text('Ask before exiting'),
+            subtitle: const Text('Confirm when the back button would close the app'),
+            value: s.confirmExit,
+            onChanged: (v) => notifier.update((x) => x.copyWith(confirmExit: v)),
+          ),
+          SwitchListTile(
             secondary: const Icon(Icons.dark_mode_outlined),
             title: const Text('Dark theme'),
             value: isDark,
@@ -174,7 +181,7 @@ class SettingsPage extends ConsumerWidget {
               child: SizedBox(width: 48, height: 48, child: CustomPaint(painter: LogoPainter(background: true, scale: 0.86))),
             ),
             applicationName: 'Debug Browser',
-            applicationVersion: '1.6.0',
+            applicationVersion: '1.6.1',
             applicationLegalese: '© InnovateX Technology',
             aboutBoxChildren: [
               SizedBox(height: 12),

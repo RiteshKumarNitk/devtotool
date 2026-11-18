@@ -31,12 +31,16 @@ class BrowserSettings {
   final bool desktopMode;
   final bool restoreTabs;
 
+  /// Ask before the back button closes the app.
+  final bool confirmExit;
+
   const BrowserSettings({
     this.engine = SearchEngine.google,
     this.customHomepage = '',
     this.showDebugBubble = true,
     this.desktopMode = false,
     this.restoreTabs = true,
+    this.confirmExit = true,
   });
 
   String get homepage => customHomepage.trim().isEmpty ? engine.home : customHomepage.trim();
@@ -47,6 +51,7 @@ class BrowserSettings {
     bool? showDebugBubble,
     bool? desktopMode,
     bool? restoreTabs,
+    bool? confirmExit,
   }) =>
       BrowserSettings(
         engine: engine ?? this.engine,
@@ -54,6 +59,7 @@ class BrowserSettings {
         showDebugBubble: showDebugBubble ?? this.showDebugBubble,
         desktopMode: desktopMode ?? this.desktopMode,
         restoreTabs: restoreTabs ?? this.restoreTabs,
+        confirmExit: confirmExit ?? this.confirmExit,
       );
 
   Map<String, dynamic> toJson() => {
@@ -61,6 +67,7 @@ class BrowserSettings {
         'customHomepage': customHomepage,
         'showDebugBubble': showDebugBubble,
         'restoreTabs': restoreTabs,
+        'confirmExit': confirmExit,
         // desktopMode is per-session on purpose (like Chrome's "Desktop site").
       };
 
@@ -71,6 +78,7 @@ class BrowserSettings {
       customHomepage: '${j['customHomepage'] ?? ''}',
       showDebugBubble: j['showDebugBubble'] != false,
       restoreTabs: j['restoreTabs'] != false,
+      confirmExit: j['confirmExit'] != false,
     );
   }
 }
