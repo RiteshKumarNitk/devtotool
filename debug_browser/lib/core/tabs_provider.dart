@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'browser_settings.dart';
+import 'downloads.dart';
 import 'js_bridge.dart';
 import 'providers.dart';
 import 'scripts/debug_sdk_extras.dart';
@@ -117,6 +118,17 @@ class TabsNotifier extends Notifier<TabsState> {
   static const _storeKey = 'openTabs';
   final Map<String, WebViewController> _controllers = {};
   final Set<String> _sdkActive = {};
+
+  /// Per tab: main-frame URLs sent to the WebView with no page started yet.
+  /// The Android plugin reports a download as a second navigation request
+  /// for such a URL, which is how downloads are detected.
+  final Map<String, Set<String>> _pendingNav = {};
+
+  /// URLs the download probe found to be ordinary pages: navigate next time.
+  final Set<String> _forceNavigate = {};
+
+  /// Notifies the UI that a download started (file name), for a snackbar.
+  final downloadStarted = ValueNotifier<String?>(null);
   int _seq = 0;
 
   Box? get _box => Hive.isBoxOpen(settingsBoxName) ? Hive.box(settingsBoxName) : null;
@@ -248,6 +260,7 @@ class TabsNotifier extends Notifier<TabsState> {
     final id = tabId ?? state.activeId;
     _patch(id, (t) => t.copyWith(url: uri.toString(), loaded: true, error: () => null));
     _sdkActive.remove(id);
+    _pendingNav.putIfAbsent(id, () => {}).add(uri.toString());
     _controllers[id]?.loadRequest(uri);
   }
 
@@ -335,6 +348,7 @@ class TabsNotifier extends Notifier<TabsState> {
         },
         onPageStarted: (url) {
           _sdkActive.remove(id);
+          _pendingNav[id]?.clear();
           _patch(id, (t) => t.copyWith(url: url, isLoading: true, progress: 0.05, error: () => null));
           if (id == state.activeId) {
             ref.read(pageDataProvider.notifier).clear();
@@ -376,7 +390,18 @@ class TabsNotifier extends Notifier<TabsState> {
 
   NavigationDecision _onNavigationRequest(String id, NavigationRequest req) {
     final uri = Uri.tryParse(req.url);
-    if (uri == null || _webSchemes.contains(uri.scheme)) return NavigationDecision.navigate;
+    if (uri == null) return NavigationDecision.navigate;
+    if (_webSchemes.contains(uri.scheme)) {
+      if (!req.isMainFrame) return NavigationDecision.navigate;
+      if (_forceNavigate.remove(req.url)) return NavigationDecision.navigate;
+      final pending = _pendingNav.putIfAbsent(id, () => {});
+      if (pending.remove(req.url) || uri.scheme == 'data' && req.url.startsWith('data:application/')) {
+        _startDownload(id, req.url);
+        return NavigationDecision.prevent;
+      }
+      pending.add(req.url);
+      return NavigationDecision.navigate;
+    }
     if (uri.scheme == 'intent') {
       final fallback = intentFallbackUrl(req.url);
       if (fallback != null) {
@@ -390,6 +415,31 @@ class TabsNotifier extends Notifier<TabsState> {
       return false;
     });
     return NavigationDecision.prevent;
+  }
+
+  Future<void> _startDownload(String id, String url) async {
+    final c = _controllers[id];
+    final tab = _tab(id);
+    String? ua, cookie;
+    try {
+      ua = await c?.getUserAgent();
+      // Page cookies for same-site downloads (HttpOnly ones aren't readable).
+      final sameHost = Uri.tryParse(url)?.host == Uri.tryParse(tab?.url ?? '')?.host;
+      if (sameHost && c != null) {
+        final r = await c.runJavaScriptReturningResult('document.cookie');
+        cookie = r is String ? (r.startsWith('"') ? jsonDecode(r) as String : r) : null;
+      }
+    } catch (_) {}
+    final downloads = ref.read(downloadsProvider.notifier);
+    final isFile = await downloads.start(url, userAgent: ua, cookie: cookie, referer: tab?.url);
+    if (!isFile) {
+      // It was a normal page after all.
+      _forceNavigate.add(url);
+      _controllers[id]?.loadRequest(Uri.parse(url));
+      return;
+    }
+    final latest = ref.read(downloadsProvider);
+    downloadStarted.value = latest.isEmpty ? url : latest.first.fileName;
   }
 
   Future<void> _onPageFinished(String id, String url) async {

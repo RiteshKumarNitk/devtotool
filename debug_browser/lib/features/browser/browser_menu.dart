@@ -7,12 +7,14 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/browser_settings.dart';
+import '../../core/downloads.dart';
 import '../../core/providers.dart';
 import '../../core/tabs_provider.dart';
 import '../../core/tool_providers.dart';
 import '../more/history_page.dart';
 import '../settings/settings_page.dart';
 import 'bookmarks_page.dart';
+import 'downloads_page.dart';
 
 /// Chrome-style overflow menu. Developer tools live here, not in the footer.
 void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback onFind}) {
@@ -27,6 +29,7 @@ void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback
       final bookmarked = ref.watch(bookmarksProvider).any((b) => b['url'] == tab.url);
       final errors = ref.watch(consoleLogsProvider.select((l) => l.where((x) => x.level == 'error').length));
       final nav = Navigator.of(context);
+      final running = ref.watch(downloadsProvider.select((l) => l.where((d) => d.status == DownloadStatus.running).length));
 
       void close() => Navigator.pop(sheet);
       void push(Widget page) {
@@ -98,6 +101,12 @@ void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback
                 leading: const Icon(Icons.bookmarks_outlined),
                 title: const Text('Bookmarks'),
                 onTap: () => push(const BookmarksPage()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.download_outlined),
+                title: const Text('Downloads'),
+                trailing: running > 0 ? Badge(label: Text('$running')) : null,
+                onTap: () => push(const DownloadsPage()),
               ),
               ListTile(
                 leading: const Icon(Icons.find_in_page_outlined),

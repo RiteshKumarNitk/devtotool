@@ -12,6 +12,7 @@ import '../../core/tabs_provider.dart';
 import '../../core/tool_providers.dart';
 import '../devtools/devtools_page.dart';
 import 'browser_menu.dart';
+import 'downloads_page.dart';
 import 'debug_bubble.dart';
 import 'tab_switcher.dart';
 
@@ -30,11 +31,28 @@ class _HomePageState extends ConsumerState<HomePage> {
   final _findText = TextEditingController();
   bool _editing = false;
   bool _finding = false;
+  late final ValueNotifier<String?> _downloads;
+
+  void _onDownloadStarted() {
+    final name = _downloads.value;
+    if (name == null || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text('Downloading $name'),
+        action: SnackBarAction(
+          label: 'View',
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DownloadsPage())),
+        ),
+      ));
+    _downloads.value = null;
+  }
 
   @override
   void initState() {
     super.initState();
     HomeTabNotifier.openDevToolsRoute = _openDevTools;
+    _downloads = ref.read(tabsProvider.notifier).downloadStarted..addListener(_onDownloadStarted);
     _addressFocus.addListener(() {
       final focused = _addressFocus.hasFocus;
       if (focused) {
@@ -48,6 +66,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   void dispose() {
     HomeTabNotifier.openDevToolsRoute = null;
+    _downloads.removeListener(_onDownloadStarted);
     _address.dispose();
     _addressFocus.dispose();
     _findText.dispose();
