@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../../branding/logo_painter.dart';
 import '../../core/browser_settings.dart';
 import '../../core/js_bridge.dart';
 import '../../core/providers.dart';
@@ -168,8 +169,12 @@ class SettingsPage extends ConsumerWidget {
           header('About'),
           const AboutListTile(
             icon: Icon(Icons.info_outline),
+            applicationIcon: ClipRRect(
+              borderRadius: BorderRadius.all(Radius.circular(12)),
+              child: SizedBox(width: 48, height: 48, child: CustomPaint(painter: LogoPainter(background: true, scale: 0.86))),
+            ),
             applicationName: 'Debug Browser',
-            applicationVersion: '1.5.0',
+            applicationVersion: '1.6.0',
             applicationLegalese: '© InnovateX Technology',
             aboutBoxChildren: [
               SizedBox(height: 12),

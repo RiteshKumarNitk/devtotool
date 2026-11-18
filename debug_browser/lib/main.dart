@@ -6,6 +6,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'core/theme/app_theme.dart';
 import 'core/providers.dart';
 import 'core/tool_providers.dart';
+import 'branding/splash_page.dart';
 import 'features/browser/home_page.dart';
 
 Future<void> main() async {
@@ -50,7 +51,7 @@ class DebugBrowserApp extends ConsumerWidget {
       darkTheme: AppTheme.darkTheme,
       themeMode: themeMode,
       navigatorKey: appNavigatorKey,
-      home: const HomePage(),
+      home: const SplashPage(next: HomePage()),
       debugShowCheckedModeBanner: false,
     );
   }
