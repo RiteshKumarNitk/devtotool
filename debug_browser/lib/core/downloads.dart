@@ -8,6 +8,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'providers.dart';
+import 'shared_downloads.dart';
 
 enum DownloadStatus { running, completed, failed, cancelled }
 
@@ -17,6 +18,9 @@ class DownloadItem {
   final String url;
   final String fileName;
   final String? path;
+
+  /// content:// URI in the shared Downloads folder (Android 10+).
+  final String? contentUri;
   final String? mimeType;
   final int received;
   final int total; // -1 when unknown
@@ -29,6 +33,7 @@ class DownloadItem {
     required this.url,
     required this.fileName,
     this.path,
+    this.contentUri,
     this.mimeType,
     this.received = 0,
     this.total = -1,
@@ -39,9 +44,13 @@ class DownloadItem {
 
   double? get progress => total > 0 ? (received / total).clamp(0.0, 1.0) : null;
 
+  /// Whether the file is available to open/share.
+  bool get hasFile => contentUri != null || path != null;
+
   DownloadItem copyWith({
     String? fileName,
     String? path,
+    String? Function()? contentUri,
     String? mimeType,
     int? received,
     int? total,
@@ -53,6 +62,7 @@ class DownloadItem {
         url: url,
         fileName: fileName ?? this.fileName,
         path: path ?? this.path,
+        contentUri: contentUri != null ? contentUri() : this.contentUri,
         mimeType: mimeType ?? this.mimeType,
         received: received ?? this.received,
         total: total ?? this.total,
@@ -66,6 +76,7 @@ class DownloadItem {
         'url': url,
         'fileName': fileName,
         'path': path,
+        'contentUri': contentUri,
         'mimeType': mimeType,
         'received': received,
         'total': total,
@@ -89,6 +100,7 @@ class DownloadItem {
       url: '${j['url'] ?? ''}',
       fileName: '${j['fileName'] ?? 'download'}',
       path: j['path']?.toString(),
+      contentUri: j['contentUri']?.toString(),
       mimeType: j['mimeType']?.toString(),
       received: asInt(j['received'], 0),
       total: asInt(j['total'], -1),
@@ -304,6 +316,7 @@ class DownloadsNotifier extends Notifier<List<DownloadItem>> {
       sink = null;
       await part.rename(path);
       _update(id, (d) => d.copyWith(received: received, total: received, status: DownloadStatus.completed));
+      await _publish(id, path);
     } catch (e) {
       await sink?.close();
       try {
@@ -328,6 +341,7 @@ class DownloadsNotifier extends Notifier<List<DownloadItem>> {
       final path = await _uniquePath(dir, name);
       final bytes = data.contentAsBytes();
       await File(path).writeAsBytes(bytes);
+      final publishId = id;
       _add(DownloadItem(
         id: id,
         url: 'data:${data.mimeType}',
@@ -339,11 +353,43 @@ class DownloadsNotifier extends Notifier<List<DownloadItem>> {
         status: DownloadStatus.completed,
         startedAt: DateTime.now(),
       ));
+      await _publish(publishId, path);
     } catch (e) {
       _add(DownloadItem(
           id: id, url: 'data:', fileName: name, status: DownloadStatus.failed, error: '$e', startedAt: DateTime.now()));
     }
     return true;
+  }
+
+  /// Copies a finished file into the shared Downloads folder (Android 10+)
+  /// and removes the private copy. Keeps the private file if that fails.
+  Future<void> _publish(String id, String path) async {
+    final item = _find(id);
+    if (item == null) return;
+    final uri = await SharedDownloads.save(path, item.fileName, item.mimeType);
+    if (uri == null) return;
+    try {
+      await File(path).delete();
+    } catch (_) {}
+    state = [
+      for (final d in state)
+        if (d.id == id)
+          DownloadItem(
+            id: d.id,
+            url: d.url,
+            fileName: d.fileName,
+            contentUri: uri,
+            mimeType: d.mimeType,
+            received: d.received,
+            total: d.total,
+            status: d.status,
+            error: d.error,
+            startedAt: d.startedAt,
+          )
+        else
+          d,
+    ];
+    _persist();
   }
 
   void cancel(String id) {
@@ -357,6 +403,9 @@ class DownloadsNotifier extends Notifier<List<DownloadItem>> {
     final item = _find(id);
     if (item == null) return;
     if (item.status == DownloadStatus.running) cancel(id);
+    if (deleteFile && item.contentUri != null) {
+      await SharedDownloads.delete(item.contentUri!);
+    }
     if (deleteFile && item.path != null) {
       try {
         final f = File(item.path!);

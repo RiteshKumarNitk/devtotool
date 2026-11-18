@@ -42,6 +42,21 @@ void main() {
     expect(looksLikePage(null, null), isFalse);
   });
 
+  test('DownloadItem JSON keeps the shared-storage URI', () {
+    final d = DownloadItem(
+      id: '1',
+      url: 'https://a/b.pdf',
+      fileName: 'b.pdf',
+      contentUri: 'content://media/external/downloads/42',
+      status: DownloadStatus.completed,
+      startedAt: DateTime.utc(2026),
+    );
+    final back = DownloadItem.fromJson(d.toJson())!;
+    expect(back.contentUri, 'content://media/external/downloads/42');
+    expect(back.hasFile, isTrue);
+    expect(back.status, DownloadStatus.completed);
+  });
+
   test('DownloadItem JSON: a running download restores as interrupted', () {
     final d = DownloadItem(id: '1', url: 'https://a/b.zip', fileName: 'b.zip', startedAt: DateTime.utc(2026));
     final back = DownloadItem.fromJson(d.toJson())!;

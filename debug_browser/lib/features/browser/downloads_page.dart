@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/downloads.dart';
+import '../../core/shared_downloads.dart';
 
 String formatSize(int bytes) {
   if (bytes < 0) return '?';
@@ -32,6 +33,23 @@ class DownloadsPage extends ConsumerWidget {
   const DownloadsPage({super.key});
 
   Future<void> _open(BuildContext context, DownloadItem d) async {
+    final uri = d.contentUri;
+    if (uri != null) {
+      if (!await SharedDownloads.open(uri, d.mimeType) && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No app can open this file type. Try Share.')),
+        );
+      }
+      return;
+    }
+    await _share(context, d);
+  }
+
+  Future<void> _share(BuildContext context, DownloadItem d) async {
+    if (d.contentUri != null) {
+      await SharedDownloads.share(d.contentUri!, d.mimeType);
+      return;
+    }
     final path = d.path;
     if (path == null || !await File(path).exists()) {
       if (context.mounted) {
@@ -68,12 +86,15 @@ class DownloadsPage extends ConsumerWidget {
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (context, i) {
                 if (i == items.length) {
+                  final shared = items.any((x) => x.contentUri != null);
                   return FutureBuilder<Directory>(
                     future: DownloadsNotifier.downloadDir(),
                     builder: (context, snap) => Padding(
                       padding: const EdgeInsets.all(16),
                       child: Text(
-                        snap.hasData ? 'Saved in ${snap.data!.path}' : '',
+                        shared
+                            ? "Files are saved in your phone's Downloads folder."
+                            : (snap.hasData ? 'Saved in ${snap.data!.path}' : ''),
                         style: const TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                     ),
@@ -113,6 +134,8 @@ class DownloadsPage extends ConsumerWidget {
                             switch (v) {
                               case 'open':
                                 await _open(context, d);
+                              case 'share':
+                                await _share(context, d);
                               case 'retry':
                                 await notifier.retry(d.id);
                               case 'copy':
@@ -125,7 +148,9 @@ class DownloadsPage extends ConsumerWidget {
                           },
                           itemBuilder: (_) => [
                             if (d.status == DownloadStatus.completed)
-                              const PopupMenuItem(value: 'open', child: Text('Open / share')),
+                              const PopupMenuItem(value: 'open', child: Text('Open')),
+                            if (d.status == DownloadStatus.completed)
+                              const PopupMenuItem(value: 'share', child: Text('Share')),
                             if (d.status != DownloadStatus.completed && !d.url.startsWith('data:'))
                               const PopupMenuItem(value: 'retry', child: Text('Retry')),
                             const PopupMenuItem(value: 'copy', child: Text('Copy link')),

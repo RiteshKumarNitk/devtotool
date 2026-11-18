@@ -9,7 +9,7 @@ A Flutter mobile browser with built-in developer tools, for debugging web pages 
 | **Browser** | Chrome/Firefox-style: opens to Google (or your homepage). Address bar with padlock/site info, suggestions from bookmarks and history, and your choice of search engine (Google, DuckDuckGo, Bing, Brave). Bottom toolbar: back, forward, home, tabs, menu. |
 | **Tabs** | Multiple tabs with a tab switcher (swipe to close, close all); restored on restart and loaded lazily. Links with `target=_blank` and `window.open` open new tabs; long-press a link for open in new/background tab, copy, share. |
 | **Menu** | New tab, bookmark, share, reload, history, bookmarks, find in page, desktop site, copy link, screenshot, **Developer tools**, hard reload, settings. |
-| **Downloads** | Files the page serves as downloads (PDFs, APKs, archives, `data:` URLs) are saved with progress, cancel, retry, open/share and delete. File names come from `Content-Disposition` (RFC 6266) or the URL and are sanitised. |
+| **Downloads** | Files the page serves as downloads (PDFs, APKs, archives, `data:` URLs) are saved with progress, cancel, retry, open, share and delete. On Android 10+ finished files go to the phone's shared **Downloads** folder (MediaStore; no storage permission) and open in their default app. File names come from `Content-Disposition` (RFC 6266) or the URL and are sanitised. |
 | **Find in page** | Highlights all matches with a match count and next/previous. |
 | **Other apps** | `tel:`, `mailto:`, `sms:`, maps, Play Store and `intent://` links open the right app (or the intent's fallback URL). |
 | **Settings** | Search engine, homepage, reopen tabs, theme, clear browsing data, floating debug bubble on/off. |
@@ -84,5 +84,5 @@ flutter run
 - The geolocation override applies to calls made after the page loads.
 - Developer tools show the active tab only; background tabs are not recorded.
 - No private/incognito mode: Android WebView shares cookies across tabs.
-- Downloads use the page's readable cookies only; files behind HttpOnly-cookie logins may fail. `blob:` downloads aren't supported. Files are saved in the app's folder (`Android/data/<app>/files/Download`), not the shared Downloads folder.
+- Downloads use the page's readable cookies only; files behind HttpOnly-cookie logins may fail. `blob:` downloads aren't supported. On Android 7–9 files stay in the app's folder (`Android/data/<app>/files/Download`) and open via the share sheet.
 - Screenshots of the WebView can come out blank on some Android devices (platform-view limitation).
