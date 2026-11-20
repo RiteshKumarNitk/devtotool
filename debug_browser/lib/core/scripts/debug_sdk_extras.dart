@@ -710,6 +710,244 @@ const String debugSdkExtrasJs = r'''
     };
 
     // ---------------------------------------------------------------
+    // Block this element: tap to pick, "bigger" = parent, preview
+    // ---------------------------------------------------------------
+    function cssEscape(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&'); }
+    function uniqueSelector(el) {
+        if (el.id && !/\d{3,}/.test(el.id) && document.querySelectorAll('#' + cssEscape(el.id)).length === 1) return '#' + cssEscape(el.id);
+        const parts = [];
+        for (let n = el; n && n.nodeType === 1 && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+            if (n.id && !/\d{3,}/.test(n.id)) { parts.unshift('#' + cssEscape(n.id)); break; }
+            let part = n.tagName.toLowerCase();
+            const cls = (typeof n.className === 'string' ? n.className : '').trim().split(/\s+/)
+                .filter(function (c) { return c && !/\d{3,}|^(active|open|show|hover|focus|selected)$/.test(c) && !c.startsWith('__dbg'); })
+                .slice(0, 2);
+            if (cls.length) part += '.' + cls.map(cssEscape).join('.');
+            const parent = n.parentElement;
+            if (parent) {
+                const same = Array.prototype.filter.call(parent.children, function (c) { return c.tagName === n.tagName; });
+                if (same.length > 1) part += ':nth-of-type(' + (same.indexOf(n) + 1) + ')';
+            }
+            parts.unshift(part);
+            const sel = parts.join(' > ');
+            if (document.querySelectorAll(sel).length === 1 && parts.length >= 2) return sel;
+            if (parts.length >= 6) break;
+        }
+        return parts.join(' > ');
+    }
+    let picked = null, pickBox = null, pickPreview = null;
+    function markPicked(el) {
+        picked = el;
+        if (!pickBox) {
+            pickBox = document.createElement('div');
+            pickBox.id = '__dbg-pickbox';
+            pickBox.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;border:3px solid #ff4e42;background:rgba(255,78,66,.18);border-radius:4px';
+            document.documentElement.appendChild(pickBox);
+        }
+        const r = el.getBoundingClientRect();
+        pickBox.style.top = r.top + 'px'; pickBox.style.left = r.left + 'px';
+        pickBox.style.width = r.width + 'px'; pickBox.style.height = r.height + 'px';
+        const sel = uniqueSelector(el);
+        send('element_picked', {
+            selector: sel,
+            tag: el.tagName.toLowerCase(),
+            text: (el.innerText || el.textContent || '').trim().substring(0, 80),
+            count: document.querySelectorAll(sel).length,
+            canGrow: !!(el.parentElement && el.parentElement !== document.body && el.parentElement !== document.documentElement)
+        });
+    }
+    function pickTap(e) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        if (el && el !== pickBox) markPicked(el);
+    }
+    dbg.pickElement = function () {
+        dbg.pickCancel();
+        window.addEventListener('click', pickTap, true);
+        document.documentElement.style.cursor = 'crosshair';
+    };
+    dbg.pickParent = function () {
+        if (picked && picked.parentElement && picked.parentElement !== document.body) markPicked(picked.parentElement);
+    };
+    dbg.pickPreview = function (on) {
+        if (!picked) return;
+        if (on) { pickPreview = picked.style.display; picked.style.setProperty('display', 'none', 'important'); if (pickBox) pickBox.style.display = 'none'; }
+        else { picked.style.display = pickPreview || ''; if (pickBox) pickBox.style.display = ''; }
+    };
+    dbg.pickCancel = function () {
+        window.removeEventListener('click', pickTap, true);
+        document.documentElement.style.cursor = '';
+        if (picked && pickPreview !== null) picked.style.display = pickPreview || '';
+        if (pickBox) { pickBox.remove(); pickBox = null; }
+        picked = null; pickPreview = null;
+    };
+    dbg.hideSelector = function (sel) {
+        dbg.pickCancel();
+        let s = document.getElementById('__dbg_hidden_live');
+        if (!s) { s = document.createElement('style'); s.id = '__dbg_hidden_live'; document.documentElement.appendChild(s); }
+        s.textContent += sel + '{display:none!important}\n';
+    };
+
+    // ---------------------------------------------------------------
+    // Highlighter: select text -> floating "Highlight" button
+    // ---------------------------------------------------------------
+    const HL_COLORS = { yellow: '#fff176', green: '#a5d6a7', pink: '#f8bbd0', blue: '#90caf9' };
+    function textNodesIn(root) {
+        const out = [];
+        const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+            acceptNode: function (n) {
+                const p = n.parentElement;
+                return p && !/^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA)$/.test(p.tagName) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+            }
+        });
+        while (w.nextNode()) out.push(w.currentNode);
+        return out;
+    }
+    function wrapRange(range, id, color) {
+        const nodes = textNodesIn(range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentNode)
+            .filter(function (n) { return range.intersectsNode(n); });
+        nodes.forEach(function (n) {
+            let start = n === range.startContainer ? range.startOffset : 0;
+            let end = n === range.endContainer ? range.endOffset : n.nodeValue.length;
+            if (end <= start) return;
+            const part = n.splitText(start);
+            part.splitText(end - start);
+            const mark = document.createElement('mark');
+            mark.className = '__dbg_hl';
+            mark.setAttribute('data-hl', id);
+            mark.style.cssText = 'background:' + (HL_COLORS[color] || color) + ';color:inherit;border-radius:2px;padding:0 1px';
+            part.parentNode.replaceChild(mark, part);
+            mark.appendChild(part);
+        });
+    }
+    function contextOf(range) {
+        const all = textNodesIn(document.body);
+        let text = '', startAt = -1, endAt = -1;
+        all.forEach(function (n) {
+            if (n === range.startContainer) startAt = text.length + range.startOffset;
+            if (n === range.endContainer) endAt = text.length + range.endOffset;
+            text += n.nodeValue;
+        });
+        return {
+            prefix: startAt < 0 ? '' : text.substring(Math.max(0, startAt - 32), startAt),
+            suffix: endAt < 0 ? '' : text.substring(endAt, endAt + 32)
+        };
+    }
+    /** Finds [text] in the page, preferring the match with the same context. */
+    function findText(t, prefix, suffix) {
+        const all = textNodesIn(document.body);
+        let full = '';
+        const starts = [];
+        all.forEach(function (n) { starts.push(full.length); full += n.nodeValue; });
+        let best = -1, bestScore = -1, i = full.indexOf(t);
+        while (i >= 0) {
+            let score = 0;
+            if (prefix && full.substring(i - prefix.length, i) === prefix) score += 2;
+            if (suffix && full.substring(i + t.length, i + t.length + suffix.length) === suffix) score += 2;
+            if (score > bestScore) { bestScore = score; best = i; }
+            i = full.indexOf(t, i + 1);
+        }
+        if (best < 0) return null;
+        function locate(off) {
+            let k = 0;
+            while (k + 1 < starts.length && starts[k + 1] <= off) k++;
+            return { node: all[k], offset: off - starts[k] };
+        }
+        const a = locate(best), b = locate(best + t.length);
+        const r = document.createRange();
+        r.setStart(a.node, a.offset);
+        r.setEnd(b.node, b.offset);
+        return r;
+    }
+    let hlButton = null;
+    function hideHlButton() { if (hlButton) { hlButton.remove(); hlButton = null; } }
+    document.addEventListener('selectionchange', function () {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0 || sel.toString().trim().length < 3) { setTimeout(hideHlButton, 200); return; }
+        const r = sel.getRangeAt(0).getBoundingClientRect();
+        if (!hlButton) {
+            hlButton = document.createElement('button');
+            hlButton.textContent = '✎ Highlight';
+            hlButton.style.cssText = 'position:fixed;z-index:2147483647;padding:8px 14px;border-radius:18px;border:0;' +
+                'background:#1a73e8;color:#fff;font:600 14px system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3)';
+            hlButton.addEventListener('mousedown', function (e) { e.preventDefault(); });
+            hlButton.addEventListener('click', function (e) {
+                e.preventDefault(); e.stopPropagation();
+                dbg.highlightSelection('yellow');
+            });
+            document.documentElement.appendChild(hlButton);
+        }
+        hlButton.style.top = Math.max(8, r.top - 46) + 'px';
+        hlButton.style.left = Math.max(8, Math.min(window.innerWidth - 130, r.left)) + 'px';
+    });
+    dbg.highlightSelection = function (color) {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+        const range = sel.getRangeAt(0);
+        const text = sel.toString();
+        const ctx = contextOf(range);
+        const id = 'h' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        wrapRange(range, id, color);
+        sel.removeAllRanges();
+        hideHlButton();
+        send('highlight_added', { id: id, text: text.substring(0, 2000), prefix: ctx.prefix, suffix: ctx.suffix, color: color });
+    };
+    dbg.applyHighlights = function (json) {
+        let list = [];
+        try { list = JSON.parse(json) || []; } catch (e) { }
+        list.forEach(function (h) {
+            if (document.querySelector('mark[data-hl="' + h.id + '"]')) return;
+            const r = findText(h.text, h.prefix, h.suffix);
+            if (r) wrapRange(r, h.id, h.color || 'yellow');
+        });
+    };
+    dbg.removeHighlight = function (id) {
+        document.querySelectorAll('mark[data-hl="' + id + '"]').forEach(function (m) {
+            const p = m.parentNode;
+            while (m.firstChild) p.insertBefore(m.firstChild, m);
+            p.removeChild(m);
+            p.normalize();
+        });
+    };
+    document.addEventListener('click', function (e) {
+        const m = e.target && e.target.closest ? e.target.closest('mark.__dbg_hl') : null;
+        if (m) send('highlight_tap', { id: m.getAttribute('data-hl') });
+    }, true);
+
+    // ---------------------------------------------------------------
+    // Picture-in-picture: make the playing video fill the page
+    // ---------------------------------------------------------------
+    let pipEl = null, pipStyle = null;
+    dbg.focusVideo = function (on) {
+        if (!on) {
+            if (pipEl) pipEl.setAttribute('style', pipStyle || '');
+            const bg = document.getElementById('__dbg_pipbg'); if (bg) bg.remove();
+            pipEl = null;
+            return JSON.stringify({ ok: true });
+        }
+        let best = null, area = 0;
+        document.querySelectorAll('video, iframe').forEach(function (el) {
+            const r = el.getBoundingClientRect();
+            const a = r.width * r.height;
+            const playing = el.tagName === 'VIDEO' ? !el.paused : true;
+            if (a > area && a > 120 * 80 && playing) { area = a; best = el; }
+        });
+        if (!best) return JSON.stringify({ ok: false });
+        const r = best.getBoundingClientRect();
+        let w = best.videoWidth || r.width, h = best.videoHeight || r.height;
+        pipEl = best;
+        pipStyle = best.getAttribute('style');
+        const bg = document.createElement('div');
+        bg.id = '__dbg_pipbg';
+        bg.style.cssText = 'position:fixed;inset:0;background:#000;z-index:2147483646';
+        document.documentElement.appendChild(bg);
+        best.setAttribute('style', (pipStyle || '') + ';position:fixed!important;inset:0!important;width:100vw!important;' +
+            'height:100vh!important;max-width:none!important;max-height:none!important;z-index:2147483647!important;' +
+            'background:#000!important;object-fit:contain!important;margin:0!important;transform:none!important');
+        return JSON.stringify({ ok: true, w: Math.round(w), h: Math.round(h) });
+    };
+
+    // ---------------------------------------------------------------
     // Geolocation override
     // ---------------------------------------------------------------
     const realGeo = navigator.geolocation;

@@ -56,6 +56,17 @@ abstract final class BrowserNative {
     }
   }
 
+  static Future<bool> setBlockImages(WebViewController controller, bool block) async {
+    final platform = controller.platform;
+    if (platform is! AndroidWebViewController) return false;
+    return _bool('setBlockImages', {'id': platform.webViewIdentifier, 'block': block});
+  }
+
+  static int? webViewId(WebViewController controller) {
+    final platform = controller.platform;
+    return platform is AndroidWebViewController ? platform.webViewIdentifier : null;
+  }
+
   static Future<bool> clearPrivateData() => _bool('clearPrivateData');
 
   static Future<bool> proxySupported() => _bool('proxySupported');

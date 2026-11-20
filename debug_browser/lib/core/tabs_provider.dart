@@ -13,6 +13,8 @@ import 'browser_settings.dart';
 import 'downloads.dart';
 import 'extensions.dart';
 import 'favicons.dart';
+import 'highlights.dart';
+import 'search_shortcuts.dart';
 import 'home_stats.dart';
 import 'js_bridge.dart';
 import 'providers.dart';
@@ -59,6 +61,9 @@ class BrowserTab {
   /// there, like Chrome.
   final String? openerId;
 
+  /// Tab group name (null = ungrouped).
+  final String? group;
+
   const BrowserTab({
     required this.id,
     required this.url,
@@ -77,6 +82,7 @@ class BrowserTab {
     this.ntpBehind = false,
     this.insecureFallback,
     this.openerId,
+    this.group,
   });
 
   bool get isNewTab => url == newTabUrl;
@@ -108,6 +114,7 @@ class BrowserTab {
     String? Function()? lastWebTitle,
     bool? ntpBehind,
     String? Function()? insecureFallback,
+    String? Function()? group,
   }) =>
       BrowserTab(
         id: id,
@@ -127,6 +134,7 @@ class BrowserTab {
         ntpBehind: ntpBehind ?? this.ntpBehind,
         insecureFallback: insecureFallback != null ? insecureFallback() : this.insecureFallback,
         openerId: openerId,
+        group: group != null ? group() : this.group,
       );
 }
 
@@ -302,7 +310,13 @@ class TabsNotifier extends Notifier<TabsState> {
       for (final t in (saved['tabs'] as List).whereType<Map>().take(maxTabs)) {
         final url = '${t['url'] ?? ''}';
         if (!url.startsWith('http') && url != newTabUrl && !url.startsWith('file://')) continue;
-        restored.add(BrowserTab(id: _newId(), url: url, title: '${t['title'] ?? ''}', loaded: false));
+        restored.add(BrowserTab(
+          id: _newId(),
+          url: url,
+          title: '${t['title'] ?? ''}',
+          loaded: false,
+          group: t['group'] is String && (t['group'] as String).isNotEmpty ? t['group'] as String : null,
+        ));
       }
       activeIndex = (saved['active'] as num?)?.toInt() ?? 0;
     }
@@ -465,16 +479,66 @@ class TabsNotifier extends Notifier<TabsState> {
     if (!tab.loaded) {
       _patch(id, (t) => t.copyWith(loaded: true));
       final ready = _extReady[id] ?? Future<void>.value();
-      ready.whenComplete(() => _loadInto(id, normaliseUrlInput(tab.url)));
+      ready.whenComplete(() {
+        _applyJsMode(id, tab.url);
+        _loadInto(id, normaliseUrlInput(tab.url));
+      });
     }
   }
 
   // ------------------------------------------------------------ navigation
 
   void loadInput(String text) {
+    final shortcut = matchShortcut(text, ref.read(searchShortcutsProvider));
+    if (shortcut != null) {
+      loadUri(shortcut.$1.uriFor(shortcut.$2));
+      return;
+    }
     final engine = _settings.engine;
     loadUri(normaliseUrlInput(text, search: engine.searchUri));
   }
+
+  // ------------------------------------------------------------ tab groups
+
+  /// Group names in use (in tab order).
+  List<String> get groups => <String>{
+        for (final t in state.tabs)
+          if (t.group != null) t.group!,
+      }.toList();
+
+  void setGroup(String tabId, String? group) {
+    final g = group?.trim();
+    _patch(tabId, (t) => t.copyWith(group: () => (g == null || g.isEmpty) ? null : g));
+    _persist();
+  }
+
+  void renameGroup(String from, String to) {
+    final name = to.trim();
+    if (name.isEmpty) return;
+    state = TabsState([for (final t in state.tabs) t.group == from ? t.copyWith(group: () => name) : t], state.activeId);
+    _persist();
+  }
+
+  void ungroup(String group) {
+    state = TabsState([for (final t in state.tabs) t.group == group ? t.copyWith(group: () => null) : t], state.activeId);
+    _persist();
+  }
+
+  /// Plays every video/audio on the page (all frames) at [rate].
+  void setVideoRate(double rate) => activeController
+      .runJavaScript('window.__dbg_setVideoRate && window.__dbg_setVideoRate($rate)')
+      .catchError((Object _) {});
+
+  /// JavaScript per site (NoScript-style): set before each navigation.
+  void _applyJsMode(String id, String url) {
+    final on = ref.read(extensionsProvider).jsOn(url);
+    final wasOff = _jsOff.contains(id);
+    if (on == !wasOff) return;
+    on ? _jsOff.remove(id) : _jsOff.add(id);
+    _controllers[id]?.setJavaScriptMode(on ? JavaScriptMode.unrestricted : JavaScriptMode.disabled);
+  }
+
+  final Set<String> _jsOff = {};
 
   void loadUri(Uri uri, {String? tabId}) {
     final id = tabId ?? state.activeId;
@@ -509,6 +573,7 @@ class TabsNotifier extends Notifier<TabsState> {
   void _loadInto(String id, Uri uri) {
     final c = _controllers[id];
     if (c == null) return;
+    _applyJsMode(id, uri.toString());
     if (uri.scheme == 'file') {
       c.loadFile(uri.toFilePath());
     } else {
@@ -625,7 +690,7 @@ class TabsNotifier extends Notifier<TabsState> {
     _box?.put(_storeKey, {
       'tabs': [
         for (final t in state.tabs)
-          if (!t.isPrivate) {'url': t.url, 'title': t.title},
+          if (!t.isPrivate) {'url': t.url, 'title': t.title, if (t.group != null) 'group': t.group},
       ],
       'active': state.tabs.where((t) => !t.isPrivate).toList().indexWhere((t) => t.id == state.activeId).clamp(0, 999),
     });
@@ -731,7 +796,9 @@ class TabsNotifier extends Notifier<TabsState> {
 
   Future<void> _applyExtensions(String id) async {
     final c = _controllers[id];
-    if (c == null || !await _startScriptsSupported) return;
+    if (c == null) return;
+    await BrowserNative.setBlockImages(c, ref.read(extensionsProvider).dataSaver);
+    if (!await _startScriptsSupported) return;
     await BrowserNative.setStartScripts(
       c,
       buildStartScripts(ref.read(extensionsProvider), ref.read(userScriptsProvider)),
@@ -742,18 +809,14 @@ class TabsNotifier extends Notifier<TabsState> {
     for (final id in _controllers.keys.toList()) {
       if (_awaitingProfile.contains(id)) continue;
       await _applyExtensions(id);
+      final t = _tab(id);
+      if (t != null && !t.isNewTab) _applyJsMode(id, t.url);
     }
     reload();
   }
 
   void _onExtensionsChanged(ExtensionSettings? prev, ExtensionSettings next) {
-    final zoomOnly = prev != null &&
-        prev.blocker == next.blocker &&
-        prev.cosmetic == next.cosmetic &&
-        prev.dark == next.dark &&
-        prev.cookies == next.cookies &&
-        prev.popups == next.popups &&
-        _sameExceptZoom(prev, next);
+    final zoomOnly = prev != null && _withoutZoom(prev) == _withoutZoom(next);
     if (zoomOnly) {
       _applyTextZoom(state.activeId, state.active.url);
     } else {
@@ -761,15 +824,21 @@ class TabsNotifier extends Notifier<TabsState> {
     }
   }
 
-  static bool _sameExceptZoom(ExtensionSettings a, ExtensionSettings b) {
-    final keys = {...a.sites.keys, ...b.sites.keys};
-    for (final k in keys) {
-      final x = a.sites[k], y = b.sites[k];
-      if (x?.blocker != y?.blocker || x?.dark != y?.dark || x?.cookies != y?.cookies || x?.popups != y?.popups) {
-        return false;
+  /// Settings as JSON without text sizes: a change elsewhere needs the page
+  /// scripts re-applied; a text-size change doesn't.
+  static String _withoutZoom(ExtensionSettings s) {
+    final j = s.toJson();
+    final sites = Map<String, dynamic>.from(j['sites'] as Map);
+    for (final k in sites.keys.toList()) {
+      final m = Map<String, dynamic>.from(sites[k] as Map)..remove('textZoom');
+      if (m.isEmpty) {
+        sites.remove(k);
+      } else {
+        sites[k] = m;
       }
     }
-    return true;
+    j['sites'] = sites;
+    return jsonEncode(j);
   }
 
   void _applyTextZoom(String id, String url) {
@@ -787,6 +856,7 @@ class TabsNotifier extends Notifier<TabsState> {
     if (uri == null) return NavigationDecision.navigate;
     if (_webSchemes.contains(uri.scheme)) {
       if (!req.isMainFrame) return NavigationDecision.navigate;
+      _applyJsMode(id, req.url);
       if (_settings.httpsOnly && shouldUpgradeToHttps(uri, allowedHttpHosts: _httpAllowed)) {
         final host = uri.host.toLowerCase();
         final last = _recentUpgrades[host];
@@ -949,6 +1019,10 @@ class TabsNotifier extends Notifier<TabsState> {
       await c.runJavaScript(_mocksJs(ref.read(networkMocksProvider)));
       await c.runJavaScript(_conditionJs(ref.read(networkConditionProvider)));
       await c.runJavaScript(_geoJs(ref.read(geoOverrideProvider)));
+      if (_tab(id)?.isPrivate == false) {
+        final json = ref.read(highlightsProvider.notifier).pageJson(url);
+        if (json != '[]') await c.runJavaScript('window.__dbg && window.__dbg.applyHighlights(${jsString(json)})');
+      }
       if (!await _startScriptsSupported) {
         // Old WebView: inject late (after load). Blocking is weaker this way.
         for (final js in buildStartScripts(ref.read(extensionsProvider), ref.read(userScriptsProvider))) {

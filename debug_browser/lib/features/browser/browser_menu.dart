@@ -21,6 +21,8 @@ import '../../core/page_tools.dart';
 import '../../core/read_aloud.dart';
 import '../tools/offline_pages_page.dart';
 import '../tools/source_viewer_page.dart';
+import '../tools/highlights_page.dart';
+import 'qr_sheet.dart';
 
 /// Chrome-style overflow menu. Developer tools live here, not in the footer.
 void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback onFind}) {
@@ -247,6 +249,62 @@ void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback
                       },
                     ),
                     _Quick(
+                      icon: Icons.highlight_alt,
+                      label: 'Block element',
+                      onTap: () {
+                        close();
+                        if (tab.isNewTab) return snack('Open a web page first');
+                        tabs.activeController.runJavaScript('window.__dbg && window.__dbg.pickElement()');
+                        snack('Tap the thing you want to hide');
+                      },
+                    ),
+                    _Quick(
+                      icon: Icons.slow_motion_video,
+                      label: 'Video speed',
+                      onTap: () async {
+                        close();
+                        final rate = await showModalBottomSheet<double>(
+                          context: context,
+                          showDragHandle: true,
+                          builder: (c) => SafeArea(
+                            child: Wrap(alignment: WrapAlignment.center, spacing: 8, runSpacing: 8, children: [
+                              for (final r in const [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0])
+                                ChoiceChip(label: Text('$r×'), selected: false, onSelected: (_) => Navigator.pop(c, r)),
+                              const SizedBox(width: double.infinity, height: 16),
+                            ]),
+                          ),
+                        );
+                        if (rate == null) return;
+                        tabs.setVideoRate(rate);
+                        snack('Videos on this page play at $rate×');
+                      },
+                    ),
+                    _Quick(
+                      icon: Icons.picture_in_picture_alt_outlined,
+                      label: 'Picture-in-picture',
+                      onTap: () async {
+                        close();
+                        final err = await startPictureInPicture(read);
+                        if (err != null) snack(err);
+                      },
+                    ),
+                    _Quick(
+                      icon: Icons.picture_as_pdf_outlined,
+                      label: 'Print / PDF',
+                      onTap: () async {
+                        close();
+                        if (!await printActivePage(read)) snack('Open a web page first');
+                      },
+                    ),
+                    _Quick(
+                      icon: Icons.qr_code_2,
+                      label: 'QR code',
+                      onTap: () {
+                        close();
+                        showQrSheet(context, read);
+                      },
+                    ),
+                    _Quick(
                       icon: Icons.code,
                       label: 'Source',
                       onTap: () async {
@@ -265,6 +323,29 @@ void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback
                 title: const Text('Offline pages'),
                 onTap: () => push(const OfflinePagesPage()),
               ),
+              ListTile(
+                leading: const Icon(Icons.border_color_outlined),
+                title: const Text('Highlights & notes'),
+                subtitle: const Text('Select text on a page and tap Highlight'),
+                onTap: () => push(const HighlightsPage()),
+              ),
+              SwitchListTile(
+                secondary: const Icon(Icons.nightlight_outlined),
+                title: const Text('Night light'),
+                value: settings.nightLight,
+                onChanged: (v) => ref.read(browserSettingsProvider.notifier).update((s) => s.copyWith(nightLight: v)),
+              ),
+              if (settings.nightLight)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Slider(
+                    value: settings.nightLightStrength,
+                    min: 0.1,
+                    max: 0.6,
+                    label: 'Strength',
+                    onChanged: (v) => ref.read(browserSettingsProvider.notifier).update((s) => s.copyWith(nightLightStrength: v)),
+                  ),
+                ),
               const Divider(),
               ListTile(
                 leading: const Icon(Icons.developer_mode, color: Colors.blueAccent),

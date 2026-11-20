@@ -98,6 +98,10 @@ class BrowserSettings {
   /// Target language for "Translate page" ('' = phone language).
   final String translateTo;
 
+  /// Warm night-light filter over pages, with strength 0.1..0.6.
+  final bool nightLight;
+  final double nightLightStrength;
+
   const BrowserSettings({
     this.engine = SearchEngine.google,
     this.customHomepage = '',
@@ -116,6 +120,8 @@ class BrowserSettings {
     this.lockPrivateTabs = false,
     this.searchSuggestions = true,
     this.translateTo = '',
+    this.nightLight = false,
+    this.nightLightStrength = 0.3,
   });
 
   String get homepage {
@@ -141,6 +147,8 @@ class BrowserSettings {
     bool? lockPrivateTabs,
     bool? searchSuggestions,
     String? translateTo,
+    bool? nightLight,
+    double? nightLightStrength,
   }) =>
       BrowserSettings(
         engine: engine ?? this.engine,
@@ -160,6 +168,8 @@ class BrowserSettings {
         lockPrivateTabs: lockPrivateTabs ?? this.lockPrivateTabs,
         searchSuggestions: searchSuggestions ?? this.searchSuggestions,
         translateTo: translateTo ?? this.translateTo,
+        nightLight: nightLight ?? this.nightLight,
+        nightLightStrength: nightLightStrength ?? this.nightLightStrength,
       );
 
   Map<String, dynamic> toJson() => {
@@ -179,6 +189,8 @@ class BrowserSettings {
         'lockPrivateTabs': lockPrivateTabs,
         'searchSuggestions': searchSuggestions,
         'translateTo': translateTo,
+        'nightLight': nightLight,
+        'nightLightStrength': nightLightStrength,
         // desktopMode is per-session on purpose (like Chrome's "Desktop site").
       };
 
@@ -201,6 +213,8 @@ class BrowserSettings {
       lockPrivateTabs: j['lockPrivateTabs'] == true,
       searchSuggestions: j['searchSuggestions'] != false,
       translateTo: '${j['translateTo'] ?? ''}',
+      nightLight: j['nightLight'] == true,
+      nightLightStrength: ((j['nightLightStrength'] as num?)?.toDouble() ?? 0.3).clamp(0.1, 0.6),
     );
   }
 }

@@ -86,18 +86,40 @@ class SiteOverride {
   final bool? cookies;
   final bool? popups;
 
+  /// JavaScript for this site (false = off, NoScript-style).
+  final bool? js;
+
+  /// Elements the user chose to hide on this site (CSS selectors).
+  final List<String> hidden;
+
   /// Text size in percent (100 = default).
   final int? textZoom;
-  const SiteOverride({this.blocker, this.dark, this.cookies, this.popups, this.textZoom});
+  const SiteOverride({
+    this.blocker,
+    this.dark,
+    this.cookies,
+    this.popups,
+    this.js,
+    this.hidden = const [],
+    this.textZoom,
+  });
 
   bool get isEmpty =>
-      blocker == null && dark == null && cookies == null && popups == null && (textZoom == null || textZoom == 100);
+      blocker == null &&
+      dark == null &&
+      cookies == null &&
+      popups == null &&
+      js == null &&
+      hidden.isEmpty &&
+      (textZoom == null || textZoom == 100);
 
   SiteOverride copyWith({
     bool? Function()? blocker,
     bool? Function()? dark,
     bool? Function()? cookies,
     bool? Function()? popups,
+    bool? Function()? js,
+    List<String>? hidden,
     int? Function()? textZoom,
   }) =>
       SiteOverride(
@@ -105,6 +127,8 @@ class SiteOverride {
         dark: dark != null ? dark() : this.dark,
         cookies: cookies != null ? cookies() : this.cookies,
         popups: popups != null ? popups() : this.popups,
+        js: js != null ? js() : this.js,
+        hidden: hidden ?? this.hidden,
         textZoom: textZoom != null ? textZoom() : this.textZoom,
       );
 
@@ -113,6 +137,8 @@ class SiteOverride {
         if (dark != null) 'dark': dark,
         if (cookies != null) 'cookies': cookies,
         if (popups != null) 'popups': popups,
+        if (js != null) 'js': js,
+        if (hidden.isNotEmpty) 'hidden': hidden,
         if (textZoom != null) 'textZoom': textZoom,
       };
 
@@ -124,6 +150,8 @@ class SiteOverride {
       dark: b(j['dark']),
       cookies: b(j['cookies']),
       popups: b(j['popups']),
+      js: b(j['js']),
+      hidden: (j['hidden'] as List?)?.map((e) => '$e').where((e) => e.isNotEmpty).toList() ?? const [],
       textZoom: (j['textZoom'] as num?)?.toInt(),
     );
   }
@@ -138,6 +166,12 @@ class ExtensionSettings {
 
   /// Pop-up, pop-under and invisible-overlay blocking.
   final bool popups;
+
+  /// Easier-to-read text on all sites (system font, more spacing).
+  final bool readableText;
+
+  /// Don't load images (saves data).
+  final bool dataSaver;
   final Map<String, SiteOverride> sites;
 
   const ExtensionSettings({
@@ -146,6 +180,8 @@ class ExtensionSettings {
     this.dark = false,
     this.cookies = false,
     this.popups = true,
+    this.readableText = false,
+    this.dataSaver = false,
     this.sites = const {},
   });
 
@@ -156,6 +192,8 @@ class ExtensionSettings {
   bool darkOn(String host) => dark && (site(host).dark ?? true);
   bool cookiesOn(String host) => cookies && (site(host).cookies ?? true);
   bool popupsOn(String host) => popups && (site(host).popups ?? true);
+  bool jsOn(String host) => site(host).js ?? true;
+  List<String> hiddenOn(String host) => site(host).hidden;
   int textZoom(String host) => site(host).textZoom ?? 100;
 
   ExtensionSettings copyWith({
@@ -164,6 +202,8 @@ class ExtensionSettings {
     bool? dark,
     bool? cookies,
     bool? popups,
+    bool? readableText,
+    bool? dataSaver,
     Map<String, SiteOverride>? sites,
   }) =>
       ExtensionSettings(
@@ -172,6 +212,8 @@ class ExtensionSettings {
         dark: dark ?? this.dark,
         cookies: cookies ?? this.cookies,
         popups: popups ?? this.popups,
+        readableText: readableText ?? this.readableText,
+        dataSaver: dataSaver ?? this.dataSaver,
         sites: sites ?? this.sites,
       );
 
@@ -193,6 +235,8 @@ class ExtensionSettings {
         'dark': dark,
         'cookies': cookies,
         'popups': popups,
+        'readableText': readableText,
+        'dataSaver': dataSaver,
         'sites': {for (final e in sites.entries) e.key: e.value.toJson()},
       };
 
@@ -205,6 +249,8 @@ class ExtensionSettings {
       dark: j['dark'] == true,
       cookies: j['cookies'] == true,
       popups: j['popups'] != false,
+      readableText: j['readableText'] == true,
+      dataSaver: j['dataSaver'] == true,
       sites: sites is Map ? {for (final e in sites.entries) '${e.key}': SiteOverride.fromJson(e.value)} : const {},
     );
   }
@@ -356,6 +402,7 @@ Map<String, dynamic> extensionConfig(ExtensionSettings s) => {
       'dark': s.dark,
       'cookies': s.cookies,
       'popups': s.popups,
+      'readable': s.readableText,
       'blockDomains': defaultBlockDomains.where((d) => !d.contains('/')).toList(),
       'sites': {
         for (final e in s.sites.entries) e.key: e.value.toJson(),

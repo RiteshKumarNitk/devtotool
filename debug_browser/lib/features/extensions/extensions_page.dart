@@ -64,6 +64,20 @@ class ExtensionsPage extends ConsumerWidget {
             onChanged: (v) => n.update((x) => x.copyWith(popups: v)),
           ),
           SwitchListTile(
+            secondary: const Icon(Icons.image_not_supported_outlined),
+            title: const Text('Data saver'),
+            subtitle: const Text('Don’t load images. Pages load faster on slow or expensive connections.'),
+            value: s.dataSaver,
+            onChanged: (v) => n.update((x) => x.copyWith(dataSaver: v)),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.text_fields),
+            title: const Text('Readable text'),
+            subtitle: const Text('Clearer font with more letter and line spacing on every site'),
+            value: s.readableText,
+            onChanged: (v) => n.update((x) => x.copyWith(readableText: v)),
+          ),
+          SwitchListTile(
             secondary: const Icon(Icons.cookie_outlined),
             title: const Text('Hide cookie banners'),
             subtitle: const Text('Hides common consent pop-ups. Sites still see no consent given.'),

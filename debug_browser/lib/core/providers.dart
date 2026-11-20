@@ -363,11 +363,48 @@ class BookmarksNotifier extends Notifier<List<Map<String, String>>> {
   }
 
   /// Adds a bookmark; returns false if the URL is already bookmarked.
-  bool addBookmark(String title, String url) {
+  bool addBookmark(String title, String url, {String? folder}) {
     if (state.any((b) => b['url'] == url)) return false;
-    state = [...state, {'title': title, 'url': url}];
+    state = [
+      ...state,
+      {'title': title, 'url': url, if (folder != null && folder.trim().isNotEmpty) 'folder': folder.trim()},
+    ];
     _persist();
     return true;
+  }
+
+  /// Folder names in use (bookmarks without a folder are at the top level).
+  List<String> get folders => <String>{
+        for (final b in state)
+          if ((b['folder'] ?? '').isNotEmpty) b['folder']!,
+      }.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+  void moveToFolder(String url, String? folder) {
+    final f = folder?.trim() ?? '';
+    state = [
+      for (final b in state)
+        if (b['url'] == url) ({...b}..remove('folder')..addAll(f.isEmpty ? {} : {'folder': f})) else b,
+    ];
+    _persist();
+  }
+
+  void renameBookmark(String url, String title) {
+    state = [for (final b in state) b['url'] == url ? {...b, 'title': title.trim()} : b];
+    _persist();
+  }
+
+  void renameFolder(String from, String to) {
+    final name = to.trim();
+    if (name.isEmpty) return;
+    state = [for (final b in state) b['folder'] == from ? {...b, 'folder': name} : b];
+    _persist();
+  }
+
+  /// Removes the folder; its bookmarks move to the top level.
+  void deleteFolder(String folder) {
+    state = [for (final b in state) b['folder'] == folder ? ({...b}..remove('folder')) : b];
+    _persist();
   }
 
   void removeBookmark(String url) {

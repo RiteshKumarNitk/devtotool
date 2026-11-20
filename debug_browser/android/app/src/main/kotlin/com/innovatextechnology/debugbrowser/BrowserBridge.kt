@@ -50,6 +50,13 @@ class BrowserBridge(private val engine: FlutterEngine) : MethodChannel.MethodCal
                     wv?.settings?.textZoom = call.argument<Number>("percent")!!.toInt().coerceIn(50, 300)
                     result.success(wv != null)
                 }
+                "setBlockImages" -> {
+                    @Suppress("DEPRECATION")
+                    val wv = WebViewFlutterAndroidExternalApi.getWebView(engine, call.argument<Number>("id")!!.toLong())
+                    // Data saver: don't download images.
+                    wv?.settings?.blockNetworkImage = call.argument<Boolean>("block") == true
+                    result.success(wv != null)
+                }
                 "saveWebArchive" -> {
                     @Suppress("DEPRECATION")
                     val wv = WebViewFlutterAndroidExternalApi.getWebView(engine, call.argument<Number>("id")!!.toLong())

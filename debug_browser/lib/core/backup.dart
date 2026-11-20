@@ -7,6 +7,8 @@ import 'package:flutter_riverpod/misc.dart' show ProviderListenable;
 
 import 'browser_settings.dart';
 import 'extensions.dart';
+import 'highlights.dart';
+import 'search_shortcuts.dart';
 import 'providers.dart';
 import 'tool_providers.dart';
 
@@ -24,7 +26,7 @@ List<Map<String, String>> _stringMaps(Object? v) => v is List
 @immutable
 class BackupSummary {
   final DateTime? createdAt;
-  final int bookmarks, history, userScripts, mockRules, environments, snippets;
+  final int bookmarks, history, userScripts, mockRules, environments, snippets, highlights, shortcuts;
   final bool settings, extensions, proxy;
   const BackupSummary({
     this.createdAt,
@@ -34,6 +36,8 @@ class BackupSummary {
     this.mockRules = 0,
     this.environments = 0,
     this.snippets = 0,
+    this.highlights = 0,
+    this.shortcuts = 0,
     this.settings = false,
     this.extensions = false,
     this.proxy = false,
@@ -48,6 +52,8 @@ class BackupSummary {
         if (mockRules > 0) '$mockRules API mock rule${mockRules == 1 ? '' : 's'}',
         if (environments > 0) '$environments environment${environments == 1 ? '' : 's'}',
         if (snippets > 0) '$snippets JS snippet${snippets == 1 ? '' : 's'}',
+        if (highlights > 0) '$highlights highlight${highlights == 1 ? '' : 's'}',
+        if (shortcuts > 0) '$shortcuts search shortcut${shortcuts == 1 ? '' : 's'}',
         if (proxy) 'Proxy / VPN settings (password not included)',
       ];
 }
@@ -72,6 +78,8 @@ class BackupSummary {
       mockRules: len('mockRules'),
       environments: len('environments'),
       snippets: len('snippets'),
+      highlights: len('highlights'),
+      shortcuts: len('searchShortcuts'),
       settings: d['browserSettings'] is Map,
       extensions: d['extensions'] is Map,
       proxy: d['proxy'] is Map,
@@ -97,6 +105,8 @@ Map<String, dynamic> buildBackup(ProviderReader read, {bool includeHistory = fal
       'mockRules': read(networkMocksProvider).map((r) => r.toJson()).toList(),
       'environments': read(environmentsProvider),
       'snippets': read(snippetsProvider),
+      'highlights': read(highlightsProvider).map((h) => h.toJson()).toList(),
+      'searchShortcuts': read(searchShortcutsProvider).map((s) => s.toJson()).toList(),
       'proxy': proxy,
     },
   };
@@ -137,6 +147,16 @@ void restoreBackup(ProviderReader read, Map json) {
   for (final s in _stringMaps(d['snippets'])) {
     if ((s['code'] ?? '').isNotEmpty && haveSnippets.add('${s['name']}|${s['code']}')) {
       snippets.save(s['name'] ?? 'Snippet', s['code']!);
+    }
+  }
+  if (d['highlights'] is List) {
+    read(highlightsProvider.notifier)
+        .importAll((d['highlights'] as List).map(Highlight.fromJson).whereType<Highlight>().toList());
+  }
+  if (d['searchShortcuts'] is List) {
+    final n = read(searchShortcutsProvider.notifier);
+    for (final s in (d['searchShortcuts'] as List).map(SearchShortcut.fromJson).whereType<SearchShortcut>()) {
+      n.save(s);
     }
   }
   if (d['proxy'] is Map) {

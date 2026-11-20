@@ -14,11 +14,169 @@ class TabSwitcherPage extends ConsumerStatefulWidget {
 
 class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
   late bool _private = ref.read(tabsProvider).active.isPrivate;
+  String? _groupFilter;
+
+  static const _groupColors = [
+    Color(0xFF1A73E8),
+    Color(0xFFE8710A),
+    Color(0xFF188038),
+    Color(0xFFD93025),
+    Color(0xFF9334E6),
+    Color(0xFF12B5CB),
+    Color(0xFFE52592),
+    Color(0xFF5F6368),
+  ];
+  static Color groupColor(String g) =>
+      _groupColors[g.hashCode.abs() % _groupColors.length];
+
+  Future<void> _tabMenu(BrowserTab t) async {
+    final tabs = ref.read(tabsProvider.notifier);
+    final groups = tabs.groups;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (c) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(
+              title: Text(
+                t.displayTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            for (final g in groups)
+              if (g != t.group)
+                ListTile(
+                  leading: CircleAvatar(
+                    radius: 8,
+                    backgroundColor: groupColor(g),
+                  ),
+                  title: Text('Add to "$g"'),
+                  onTap: () {
+                    Navigator.pop(c);
+                    tabs.setGroup(t.id, g);
+                  },
+                ),
+            ListTile(
+              leading: const Icon(Icons.add_circle_outline),
+              title: const Text('New group…'),
+              onTap: () async {
+                final name = await _ask('New tab group', '');
+                if (c.mounted) Navigator.pop(c);
+                if (name != null) tabs.setGroup(t.id, name);
+              },
+            ),
+            if (t.group != null)
+              ListTile(
+                leading: const Icon(Icons.remove_circle_outline),
+                title: Text('Remove from "${t.group}"'),
+                onTap: () {
+                  Navigator.pop(c);
+                  tabs.setGroup(t.id, null);
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('Close tab'),
+              onTap: () {
+                Navigator.pop(c);
+                tabs.closeTab(t.id);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<String?> _ask(String title, String initial) async {
+    final ctrl = TextEditingController(text: initial);
+    final r = await showDialog<String>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'e.g. Work, Study, Shopping',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(d),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(d, ctrl.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    return (r == null || r.trim().isEmpty) ? null : r.trim();
+  }
+
+  Future<void> _groupMenu(String g) async {
+    final tabs = ref.read(tabsProvider.notifier);
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (c) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(
+                g,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Rename group'),
+              onTap: () async {
+                Navigator.pop(c);
+                final name = await _ask('Rename group', g);
+                if (name != null) {
+                  tabs.renameGroup(g, name);
+                  if (_groupFilter == g) setState(() => _groupFilter = name);
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.layers_clear_outlined),
+              title: const Text('Ungroup tabs'),
+              onTap: () {
+                Navigator.pop(c);
+                tabs.ungroup(g);
+                setState(() => _groupFilter = null);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final all = ref.watch(tabsProvider);
-    final shown = all.tabs.where((t) => t.isPrivate == _private).toList();
+    final kind = all.tabs.where((t) => t.isPrivate == _private).toList();
+    final groupNames = <String>{
+      for (final t in kind)
+        if (t.group != null) t.group!,
+    }.toList();
+    if (_groupFilter != null && !groupNames.contains(_groupFilter)) {
+      _groupFilter = null;
+    }
+    final shown = _groupFilter == null
+        ? kind
+        : kind.where((t) => t.group == _groupFilter).toList();
     final state = TabsState(shown, all.activeId);
     final privateCount = all.tabs.where((t) => t.isPrivate).length;
     final normalCount = all.tabs.length - privateCount;
@@ -28,6 +186,51 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
 
     return Scaffold(
       appBar: AppBar(
+        bottom: groupNames.isEmpty
+            ? null
+            : PreferredSize(
+                preferredSize: const Size.fromHeight(48),
+                child: SizedBox(
+                  height: 48,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: ChoiceChip(
+                          label: Text('All ${kind.length}'),
+                          selected: _groupFilter == null,
+                          onSelected: (_) =>
+                              setState(() => _groupFilter = null),
+                        ),
+                      ),
+                      for (final g in groupNames)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: GestureDetector(
+                            onLongPress: () => _groupMenu(g),
+                            child: ChoiceChip(
+                              avatar: CircleAvatar(
+                                radius: 6,
+                                backgroundColor: groupColor(g),
+                              ),
+                              label: Text(
+                                '$g ${kind.where((t) => t.group == g).length}',
+                              ),
+                              selected: _groupFilter == g,
+                              onSelected: (_) =>
+                                  setState(() => _groupFilter = g),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
         title: SegmentedButton<bool>(
           showSelectedIcon: false,
           segments: [
@@ -85,7 +288,9 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
-          tabs.newTab(private: _private);
+          final id = tabs.newTab(private: _private);
+          // A new tab opened while viewing a group joins that group.
+          if (_groupFilter != null) tabs.setGroup(id, _groupFilter);
           Navigator.pop(context);
         },
         icon: const Icon(Icons.add),
@@ -132,11 +337,18 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
                         tabs.activate(t.id);
                         Navigator.pop(context);
                       },
+                      onLongPress: () => _tabMenu(t),
                       child: Container(
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(
-                            color: active ? scheme.primary : Colors.transparent,
+                            color: active
+                                ? scheme.primary
+                                : (t.group != null
+                                      ? groupColor(
+                                          t.group!,
+                                        ).withValues(alpha: 0.8)
+                                      : Colors.transparent),
                             width: 2.5,
                           ),
                         ),
@@ -149,7 +361,9 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
                                 children: [
                                   if (t.isNewTab || masked)
                                     Icon(
-                                      t.isPrivate ? Icons.privacy_tip_outlined : Icons.home_outlined,
+                                      t.isPrivate
+                                          ? Icons.privacy_tip_outlined
+                                          : Icons.home_outlined,
                                       size: 16,
                                     )
                                   else
@@ -157,7 +371,9 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
                                   const SizedBox(width: 6),
                                   Expanded(
                                     child: Text(
-                                      masked ? 'Private tab (locked)' : t.displayTitle,
+                                      masked
+                                          ? 'Private tab (locked)'
+                                          : t.displayTitle,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(

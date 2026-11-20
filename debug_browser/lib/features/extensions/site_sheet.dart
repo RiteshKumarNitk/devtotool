@@ -98,6 +98,29 @@ void showSiteControls(BuildContext context) {
                   SizedBox(width: 48, child: Text('$zoom%', textAlign: TextAlign.end)),
                 ]),
               ),
+              SwitchListTile(
+                secondary: const Icon(Icons.javascript),
+                title: const Text('JavaScript on this site'),
+                subtitle: Text(s.jsOn(host) ? 'On' : 'Off: most pop-ups and trackers stop; some features may break'),
+                value: s.jsOn(host),
+                onChanged: (v) => setSite((o) => o.copyWith(js: () => v ? null : false)),
+              ),
+              if (site.hidden.isNotEmpty)
+                ExpansionTile(
+                  leading: const Icon(Icons.highlight_alt),
+                  title: Text('${site.hidden.length} hidden element${site.hidden.length == 1 ? '' : 's'}'),
+                  children: [
+                    for (final sel in site.hidden)
+                      ListTile(
+                        dense: true,
+                        title: Text(sel, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                        trailing: TextButton(
+                          onPressed: () => setSite((o) => o.copyWith(hidden: [...o.hidden]..remove(sel))),
+                          child: const Text('Show again'),
+                        ),
+                      ),
+                  ],
+                ),
               ListTile(
                 leading: const Icon(Icons.chrome_reader_mode_outlined),
                 title: const Text('Reader mode'),

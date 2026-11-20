@@ -167,11 +167,52 @@ abstract final class SystemBrowser {
     }
   }
 
-  /// Links opened from other apps while running.
-  static void listen(void Function(String url) onUrl) {
+  /// Links opened from other apps, widget/tile actions and PiP changes.
+  static void listen(
+    void Function(String url) onUrl, {
+    void Function(String action)? onAction,
+    void Function(bool inPip)? onPip,
+  }) {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'openUrl' && call.arguments is String) onUrl(call.arguments as String);
+      if (call.method == 'launchAction' && call.arguments is String) onAction?.call(call.arguments as String);
+      if (call.method == 'pipChanged' && call.arguments is bool) onPip?.call(call.arguments as bool);
     });
+  }
+
+  /// Home-screen widget / Quick Settings tile action the app started with.
+  static Future<String?> takeInitialAction() async {
+    try {
+      return await _channel.invokeMethod<String>('takeInitialAction');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Android print dialog for the page ("Save as PDF" included).
+  static Future<bool> printPage(int webViewId, String title) async {
+    try {
+      return await _channel.invokeMethod<bool>('printPage', {'id': webViewId, 'title': title}) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Google Code Scanner (no camera permission). Null if cancelled.
+  static Future<String?> scanQr() async {
+    try {
+      return await _channel.invokeMethod<String>('scanQr');
+    } on PlatformException catch (e) {
+      throw StateError(e.message ?? 'Scanner unavailable');
+    }
+  }
+
+  static Future<bool> enterPip(int w, int h) async {
+    try {
+      return await _channel.invokeMethod<bool>('enterPip', {'w': w, 'h': h}) ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<bool> isDefault() async {

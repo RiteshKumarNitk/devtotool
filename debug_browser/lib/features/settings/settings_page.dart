@@ -9,6 +9,8 @@ import '../../core/providers.dart';
 import '../../core/tabs_provider.dart';
 import '../../core/tool_providers.dart';
 import 'proxy_page.dart';
+import 'search_shortcuts_page.dart';
+import '../../core/search_shortcuts.dart';
 import 'dart:convert';
 import '../../core/backup.dart';
 import '../../core/page_tools.dart';
@@ -187,6 +189,12 @@ class SettingsPage extends ConsumerWidget {
       body: ListView(
         children: [
           header('General'),
+          ListTile(
+            leading: const Icon(Icons.short_text),
+            title: const Text('Search shortcuts'),
+            subtitle: Text('Type "w taj mahal" for Wikipedia. ${ref.watch(searchShortcutsProvider).length} shortcuts'),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchShortcutsPage())),
+          ),
           ListTile(
             leading: const Icon(Icons.search),
             title: const Text('Search engine'),
@@ -372,7 +380,7 @@ class SettingsPage extends ConsumerWidget {
               child: SizedBox(width: 48, height: 48, child: CustomPaint(painter: LogoPainter(background: true, scale: 0.86))),
             ),
             applicationName: 'Debug Browser',
-            applicationVersion: '2.1.1',
+            applicationVersion: '2.2.0',
             applicationLegalese: '© InnovateX Technology',
             aboutBoxChildren: [
               SizedBox(height: 12),

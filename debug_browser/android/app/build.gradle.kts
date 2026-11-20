@@ -70,4 +70,6 @@ flutter {
 dependencies {
     // WebView Profile (private tabs) and ProxyController (proxy/VPN) APIs.
     implementation("androidx.webkit:webkit:1.15.0")
+    // QR scanning through Google Play services: no CAMERA permission needed.
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 }

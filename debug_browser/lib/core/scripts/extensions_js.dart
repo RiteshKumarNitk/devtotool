@@ -239,7 +239,49 @@ const String extensionsCoreJs = r'''
             .observe(document.documentElement, { childList: true, subtree: true });
     }
 
+    // ------------------------------------------------------ video speed
+    // The app sets a rate in the top frame; it's relayed to every frame
+    // (players often live in iframes) and re-applied to videos that start.
+    var videoRate = null;
+    function applyRate(r) {
+        videoRate = r;
+        document.querySelectorAll('video,audio').forEach(function (v) { try { v.playbackRate = r; } catch (e) { } });
+        for (var i = 0; i < window.frames.length; i++) {
+            try { window.frames[i].postMessage({ __dbgVideoRate: r }, '*'); } catch (e) { }
+        }
+    }
+    window.addEventListener('message', function (e) {
+        if (e.data && typeof e.data.__dbgVideoRate === 'number') applyRate(e.data.__dbgVideoRate);
+    });
+    document.addEventListener('play', function (e) {
+        if (videoRate && e.target && 'playbackRate' in e.target) { try { e.target.playbackRate = videoRate; } catch (x) { } }
+    }, true);
+    window.__dbg_setVideoRate = applyRate;
+
     if (!isTop) return;
+
+    // ------------------------------------------- hidden elements (per site)
+    (function () {
+        var h = host, list = [];
+        while (h) {
+            var o = CFG.sites && CFG.sites[h];
+            if (o && o.hidden) list = list.concat(o.hidden);
+            var dot = h.indexOf('.');
+            if (dot < 0) break;
+            h = h.substring(dot + 1);
+        }
+        if (list.length) addStyle(list.map(function (s) { return s + '{display:none!important}'; }).join('\n'), '__dbg_hidden');
+    })();
+
+    // ----------------------------------------------------- readable text
+    if (CFG.readable) {
+        var t = 'p,li,td,th,dd,dt,blockquote,figcaption,label,a,em,strong,b,small,' +
+            'h1,h2,h3,h4,h5,h6,article,section,main,span:not([class*="icon"]):not([class*="fa-"])';
+        addStyle(t + '{font-family:"Verdana","Roboto","Noto Sans",sans-serif!important;' +
+            'letter-spacing:0.03em!important;word-spacing:0.12em!important;line-height:1.65!important}' +
+            'pre,code,kbd,samp,tt,i[class],[class*="material-icons"],[class*="material-symbols"]{font-family:revert!important;letter-spacing:normal!important}',
+            '__dbg_readable');
+    }
 
     // ------------------------------------------------- browser UI signals
     // The page lives in a native view, so the app can't see its scrolling:

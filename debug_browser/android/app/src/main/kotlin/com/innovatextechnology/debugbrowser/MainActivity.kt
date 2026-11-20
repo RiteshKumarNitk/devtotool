@@ -18,6 +18,13 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.drawable.Icon
 import android.view.WindowManager
+import android.app.PictureInPictureParams
+import android.content.res.Configuration
+import android.print.PrintAttributes
+import android.print.PrintManager
+import android.util.Rational
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import io.flutter.plugins.webviewflutter.WebViewFlutterAndroidExternalApi
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -43,6 +50,21 @@ class MainActivity : FlutterFragmentActivity() {
     /** Link this activity was launched with (consumed once by Flutter). */
     private var initialUrl: String? = null
 
+    /** Home-screen widget / Quick Settings tile action ("search", "private"). */
+    private var initialAction: String? = null
+    private var engineRef: FlutterEngine? = null
+
+    private fun actionOf(intent: Intent?): String? = when (intent?.action) {
+        ACTION_SEARCH -> "search"
+        ACTION_PRIVATE_TAB -> "private"
+        else -> null
+    }
+
+    companion object {
+        const val ACTION_SEARCH = "com.innovatextechnology.debugbrowser.SEARCH"
+        const val ACTION_PRIVATE_TAB = "com.innovatextechnology.debugbrowser.PRIVATE_TAB"
+    }
+
     private fun webUrlOf(intent: Intent?): String? {
         if (intent?.action != Intent.ACTION_VIEW) return null
         val url = intent.dataString ?: return null
@@ -51,6 +73,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         initialUrl = webUrlOf(intent)
+        initialAction = actionOf(intent)
         super.onCreate(savedInstanceState)
     }
 
@@ -58,6 +81,51 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         webUrlOf(intent)?.let { linksChannel?.invokeMethod("openUrl", it) }
+        actionOf(intent)?.let { linksChannel?.invokeMethod("launchAction", it) }
+    }
+
+    /** Android print dialog for the page (includes "Save as PDF"). */
+    @Suppress("DEPRECATION")
+    private fun printPage(id: Long, title: String): Boolean {
+        val engine = engineRef ?: return false
+        val wv = WebViewFlutterAndroidExternalApi.getWebView(engine, id) ?: return false
+        val pm = getSystemService(PrintManager::class.java) ?: return false
+        val name = title.ifBlank { "Web page" }.take(60)
+        pm.print(name, wv.createPrintDocumentAdapter(name), PrintAttributes.Builder().build())
+        return true
+    }
+
+    /** Google Code Scanner: Play services handles the camera, so the app
+     *  needs no CAMERA permission. Returns the scanned text or null. */
+    private fun scanQr(result: MethodChannel.Result) {
+        try {
+            GmsBarcodeScanning.getClient(this).startScan()
+                .addOnSuccessListener { code -> result.success(code.rawValue) }
+                .addOnCanceledListener { result.success(null) }
+                .addOnFailureListener { e -> result.error("SCAN", e.message, null) }
+        } catch (e: Exception) {
+            result.error("SCAN", e.message, null)
+        }
+    }
+
+    /** Shrinks the app into a picture-in-picture window (Android 8+). */
+    private fun enterPip(w: Int, h: Int): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        // PiP accepts aspect ratios between 1:2.39 and 2.39:1.
+        val ratio = (w.toDouble() / h.coerceAtLeast(1)).coerceIn(0.42, 2.39)
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational((ratio * 1000).toInt(), 1000))
+            .build()
+        return try {
+            enterPictureInPictureMode(params)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        linksChannel?.invokeMethod("pipChanged", isInPictureInPictureMode)
     }
 
     /** Asks the launcher to pin a Home-screen shortcut that opens [url] here. */
@@ -156,6 +224,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        engineRef = flutterEngine
         linksChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, linksChannelName).also { ch ->
             ch.setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -163,6 +232,17 @@ class MainActivity : FlutterFragmentActivity() {
                         result.success(initialUrl)
                         initialUrl = null
                     }
+                    "takeInitialAction" -> {
+                        result.success(initialAction)
+                        initialAction = null
+                    }
+                    "printPage" -> result.success(
+                        printPage(call.argument<Number>("id")!!.toLong(), call.argument<String>("title") ?: "Web page")
+                    )
+                    "scanQr" -> scanQr(result)
+                    "enterPip" -> result.success(
+                        enterPip(call.argument<Number>("w")?.toInt() ?: 16, call.argument<Number>("h")?.toInt() ?: 9)
+                    )
                     "isDefaultBrowser" -> result.success(isDefaultBrowser())
                     "requestDefaultBrowser" -> requestDefaultBrowser(result)
                     "setSecure" -> {

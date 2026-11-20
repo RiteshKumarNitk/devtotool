@@ -239,3 +239,41 @@ Future<List<String>> writeTempPngs(List<(String, Uint8List)> images, String pref
   }
   return paths;
 }
+
+// ------------------------------------------------- picture-in-picture
+
+/// Sites where PiP is a paid feature of the service (YouTube Premium), so the
+/// browser doesn't offer it there (Play policy / YouTube terms).
+bool pipBlockedHost(String url) {
+  final h = (Uri.tryParse(url)?.host ?? '').toLowerCase();
+  return h == 'youtube.com' || h.endsWith('.youtube.com') || h == 'youtu.be' || h.endsWith('.youtube-nocookie.com');
+}
+
+/// Focuses the playing video and shrinks the app into a floating window.
+/// Returns an error message, or null on success.
+Future<String?> startPictureInPicture(ProviderReader read) async {
+  final tab = read(tabsProvider).active;
+  if (tab.isNewTab) return 'Open a page with a video first.';
+  if (pipBlockedHost(tab.url)) return 'Picture-in-picture is not available for YouTube.';
+  final c = read(tabsProvider.notifier).activeController;
+  final res = jsResultString(await c.runJavaScriptReturningResult('window.__dbg ? window.__dbg.focusVideo(true) : "{}"'));
+  Map j = const {};
+  try {
+    j = jsonDecode(res) as Map;
+  } catch (_) {}
+  if (j['ok'] != true) return 'Start playing a video first.';
+  final ok = await SystemBrowser.enterPip((j['w'] as num?)?.toInt() ?? 16, (j['h'] as num?)?.toInt() ?? 9);
+  if (!ok) {
+    await c.runJavaScript('window.__dbg && window.__dbg.focusVideo(false)');
+    return 'Picture-in-picture is not supported on this phone.';
+  }
+  return null;
+}
+
+/// Opens Android's print dialog ("Save as PDF") for the active page.
+Future<bool> printActivePage(ProviderReader read) async {
+  final tab = read(tabsProvider).active;
+  final id = BrowserNative.webViewId(read(tabsProvider.notifier).activeController);
+  if (id == null || tab.isNewTab) return false;
+  return SystemBrowser.printPage(id, tab.displayTitle);
+}

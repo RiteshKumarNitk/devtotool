@@ -14,10 +14,13 @@ import '../../core/tool_providers.dart';
 import 'package:local_auth/local_auth.dart';
 import '../devtools/devtools_page.dart';
 import '../newtab/new_tab_page.dart';
+import '../tools/highlights_page.dart';
+import '../../core/highlights.dart';
 import '../../core/home_stats.dart';
 import '../../core/extensions.dart';
 import '../../core/favicons.dart';
 import '../../core/search_suggest.dart';
+import '../../core/search_shortcuts.dart';
 import '../../core/read_aloud.dart';
 import '../extensions/site_sheet.dart';
 import 'browser_menu.dart';
@@ -86,6 +89,183 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
       tab.isLoading;
 
   late final ValueNotifier<bool> _toolbars;
+
+  // ---------------------------------------------- widget / tile / PiP
+  bool _inPip = false;
+
+  void _onLaunchAction(String action) {
+    final tabs = ref.read(tabsProvider.notifier);
+    ref.read(homeTabProvider.notifier).select(AppTab.browser);
+    if (action == 'private') {
+      tabs.newTab(private: true);
+    } else if (action == 'search') {
+      tabs.newTab();
+      Future<void>.delayed(const Duration(milliseconds: 350), () {
+        if (mounted) _addressFocus.requestFocus();
+      });
+    }
+  }
+
+  void _onPip(bool inPip) {
+    setState(() => _inPip = inPip);
+    if (!inPip) {
+      ref.read(tabsProvider.notifier).activeController
+          .runJavaScript('window.__dbg && window.__dbg.focusVideo(false)')
+          .catchError((Object _) {});
+    }
+  }
+
+  // -------------------------------------------------- block an element
+  Future<void> _showElementSheet(Map<String, dynamic> picked) async {
+    final js = ref.read(tabsProvider.notifier).activeController;
+    final selector = '${picked['selector']}';
+    final host = siteKey(ref.read(tabsProvider).active.url);
+    var preview = false;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isDismissible: true,
+      builder: (c) => StatefulBuilder(
+        builder: (c, set) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Hide this on $host?', style: Theme.of(c).textTheme.titleMedium),
+              const SizedBox(height: 6),
+              if ('${picked['text']}'.isNotEmpty)
+                Text('"${picked['text']}"', maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.grey)),
+              const SizedBox(height: 6),
+              Text('${picked['tag']} • matches ${picked['count']} element${picked['count'] == 1 ? '' : 's'}',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 12),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                if (picked['canGrow'] == true)
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.pop(c, 'parent'),
+                    icon: const Icon(Icons.open_in_full, size: 18),
+                    label: const Text('Bigger'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    preview = !preview;
+                    js.runJavaScript('window.__dbg && window.__dbg.pickPreview($preview)');
+                    set(() {});
+                  },
+                  icon: Icon(preview ? Icons.visibility : Icons.visibility_off, size: 18),
+                  label: Text(preview ? 'Show again' : 'Preview'),
+                ),
+                FilledButton.icon(
+                  onPressed: () => Navigator.pop(c, 'hide'),
+                  icon: const Icon(Icons.block, size: 18),
+                  label: const Text('Hide on this site'),
+                ),
+              ]),
+            ]),
+          ),
+        ),
+      ),
+    );
+    ref.read(pageDataProvider.notifier).put('element_picked', const {});
+    if (choice == 'parent') {
+      await js.runJavaScript('window.__dbg && window.__dbg.pickPreview(false); window.__dbg && window.__dbg.pickParent()');
+    } else if (choice == 'hide') {
+      ref.read(extensionsProvider.notifier).update((x) => x.withSite(host, (o) => o.copyWith(hidden: [...o.hidden, selector])));
+      await js.runJavaScript('window.__dbg && window.__dbg.hideSelector(${jsString(selector)})');
+      _snack('Hidden on $host. Undo from the shield in the address bar.');
+    } else {
+      await js.runJavaScript('window.__dbg && window.__dbg.pickCancel()');
+    }
+  }
+
+  // ------------------------------------------------------- highlights
+  void _onHighlightAdded(Map<String, dynamic> d) {
+    ref.read(pageDataProvider.notifier).put('highlight_added', const {});
+    final tab = ref.read(tabsProvider).active;
+    if (tab.isPrivate) {
+      _snack('Highlights are not saved in private tabs');
+      return;
+    }
+    final h = Highlight(
+      id: '${d['id']}',
+      url: tab.url,
+      title: tab.displayTitle,
+      text: '${d['text']}',
+      prefix: '${d['prefix'] ?? ''}',
+      suffix: '${d['suffix'] ?? ''}',
+      color: '${d['color'] ?? 'yellow'}',
+      created: DateTime.now(),
+    );
+    ref.read(highlightsProvider.notifier).add(h);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: const Text('Highlighted'),
+        action: SnackBarAction(
+          label: 'Add note',
+          onPressed: () async {
+            final note = await editHighlightNote(context, h);
+            if (note != null) ref.read(highlightsProvider.notifier).update(h.id, (x) => x.copyWith(note: note.trim()));
+          },
+        ),
+      ));
+  }
+
+  Future<void> _onHighlightTap(String id) async {
+    ref.read(pageDataProvider.notifier).put('highlight_tap', const {});
+    final list = ref.read(highlightsProvider).where((h) => h.id == id);
+    if (list.isEmpty) return;
+    final h = list.first;
+    final js = ref.read(tabsProvider.notifier).activeController;
+    await showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (c) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            title: Text(h.text, maxLines: 4, overflow: TextOverflow.ellipsis),
+            subtitle: h.note.isEmpty ? null : Text('📝 ${h.note}'),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(children: [
+              for (final e in highlightSwatches.entries)
+                Padding(
+                  padding: const EdgeInsets.only(right: 10),
+                  child: InkWell(
+                    onTap: () {
+                      Navigator.pop(c);
+                      ref.read(highlightsProvider.notifier).update(h.id, (x) => x.copyWith(color: e.key));
+                      js.runJavaScript(
+                          'window.__dbg && (window.__dbg.removeHighlight(${jsString(h.id)}), window.__dbg.applyHighlights(${jsString(ref.read(highlightsProvider.notifier).pageJson(h.url))}))');
+                    },
+                    child: CircleAvatar(radius: 14, backgroundColor: e.value),
+                  ),
+                ),
+            ]),
+          ),
+          ListTile(
+            leading: const Icon(Icons.edit_note),
+            title: Text(h.note.isEmpty ? 'Add note' : 'Edit note'),
+            onTap: () async {
+              Navigator.pop(c);
+              final note = await editHighlightNote(context, h);
+              if (note != null) ref.read(highlightsProvider.notifier).update(h.id, (x) => x.copyWith(note: note.trim()));
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_outline),
+            title: const Text('Remove highlight'),
+            onTap: () {
+              Navigator.pop(c);
+              ref.read(highlightsProvider.notifier).remove(h.id);
+              js.runJavaScript('window.__dbg && window.__dbg.removeHighlight(${jsString(h.id)})');
+            },
+          ),
+        ]),
+      ),
+    );
+  }
   void _onToolbars() => setState(() {});
 
   void _onPopupBlocked() {
@@ -193,7 +373,12 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
     // Links opened from other apps (when this is the default browser).
     SystemBrowser.listen(
       (url) => ref.read(tabsProvider.notifier).newTab(url: url),
+      onAction: _onLaunchAction,
+      onPip: _onPip,
     );
+    SystemBrowser.takeInitialAction().then((a) {
+      if (a != null && mounted) _onLaunchAction(a);
+    });
     SystemBrowser.takeInitialUrl().then((url) {
       if (url != null && mounted) {
         ref.read(tabsProvider.notifier).newTab(url: url);
@@ -457,10 +642,31 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
     ref.listen(tabsProvider.select((t) => t.active.isPrivate), (_, private) {
       SystemBrowser.setSecure(private);
     });
+    ref.listen(pageDataProvider.select((d) => d['element_picked']), (_, next) {
+      if (next != null && next.isNotEmpty) _showElementSheet(next);
+    });
+    ref.listen(pageDataProvider.select((d) => d['highlight_added']), (_, next) {
+      if (next != null && next.isNotEmpty) _onHighlightAdded(next);
+    });
+    ref.listen(pageDataProvider.select((d) => d['highlight_tap']), (_, next) {
+      if (next != null && next.isNotEmpty) _onHighlightTap('${next['id']}');
+    });
     ref.listen(authPromptProvider, (_, next) {
       if (next != null) _showAuthPrompt(next);
     });
     final private = tab.isPrivate;
+
+    // Picture-in-picture: only the (focused) video page, no browser chrome.
+    if (_inPip) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: _WebArea(
+          tab: tab,
+          controller: ref.read(tabsProvider.notifier).controllerFor(tab.id),
+          onSearchTap: () {},
+        ),
+      );
+    }
 
     return PopScope(
       canPop: false,
@@ -484,6 +690,13 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
             bottom: false,
             child: Column(
               children: [
+                // Tablets / unfolded foldables: Chrome-style tab strip.
+                if (MediaQuery.sizeOf(context).width >= 840)
+                  _Collapsible(
+                    visible: _barsVisible(settings, tab),
+                    alignment: Alignment.bottomCenter,
+                    child: const TabStrip(),
+                  ),
                 _Collapsible(
                   visible: _barsVisible(settings, tab),
                   alignment: Alignment.bottomCenter,
@@ -536,6 +749,14 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
                             onSearch: _submit,
                             onOpen: _openUrl,
                             listenable: _address,
+                          ),
+                        ),
+                      if (settings.nightLight)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: ColoredBox(
+                              color: const Color(0xFFFF8F00).withValues(alpha: settings.nightLightStrength * 0.55),
+                            ),
                           ),
                         ),
                       if (settings.pullToRefresh && !tab.isNewTab)
@@ -1016,12 +1237,20 @@ class _Suggestions extends ConsumerWidget {
           add(Icons.history, h);
         }
 
+        final shortcut = matchShortcut(q, ref.watch(searchShortcutsProvider));
         return Material(
           color: Theme.of(context).colorScheme.surface,
           child: ListView(
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             children: [
-              if (q.isNotEmpty)
+              if (shortcut != null)
+                ListTile(
+                  leading: CircleAvatar(radius: 14, child: Text(shortcut.$1.keyword, style: const TextStyle(fontSize: 11))),
+                  title: Text(shortcut.$2, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text('Search ${shortcut.$1.name}'),
+                  onTap: () => onSearch(q),
+                )
+              else if (q.isNotEmpty)
                 ListTile(
                   leading: const Icon(Icons.search),
                   title: Text(q, maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -1440,6 +1669,78 @@ class TabTransition extends StatelessWidget {
           );
         },
         child: KeyedSubtree(key: ValueKey(tabId), child: child),
+      ),
+    );
+  }
+}
+
+
+/// Horizontal tab strip for wide screens.
+class TabStrip extends ConsumerWidget {
+  const TabStrip({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(tabsProvider);
+    final tabs = ref.read(tabsProvider.notifier);
+    final scheme = Theme.of(context).colorScheme;
+    final private = state.active.isPrivate;
+    final shown = state.tabs.where((t) => t.isPrivate == private).toList();
+    return Material(
+      color: scheme.surfaceContainer,
+      child: SizedBox(
+        height: 40,
+        child: Row(children: [
+          Expanded(
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(left: 6, top: 4),
+              itemCount: shown.length,
+              itemBuilder: (context, i) {
+                final t = shown[i];
+                final active = t.id == state.activeId;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 2),
+                  child: Material(
+                    color: active ? scheme.surface : Colors.transparent,
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+                    child: InkWell(
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+                      onTap: () => tabs.activate(t.id),
+                      child: SizedBox(
+                        width: 200,
+                        child: Row(children: [
+                          const SizedBox(width: 10),
+                          if (t.isNewTab)
+                            Icon(t.isPrivate ? Icons.privacy_tip_outlined : Icons.home_outlined, size: 16)
+                          else
+                            SiteIcon(url: t.url, size: 16, radius: 3),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(t.displayTitle, maxLines: 1, overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 13, fontWeight: active ? FontWeight.w600 : FontWeight.normal)),
+                          ),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            iconSize: 16,
+                            tooltip: 'Close tab',
+                            icon: const Icon(Icons.close),
+                            onPressed: () => tabs.closeTab(t.id),
+                          ),
+                        ]),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          IconButton(
+            tooltip: 'New tab',
+            icon: const Icon(Icons.add),
+            onPressed: () => tabs.newTab(private: private),
+          ),
+        ]),
       ),
     );
   }
