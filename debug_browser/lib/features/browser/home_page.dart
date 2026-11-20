@@ -38,6 +38,24 @@ class _HomePageState extends ConsumerState<HomePage> {
   bool _finding = false;
   late final ValueNotifier<String?> _downloads;
   late final ValueNotifier<String?> _notice;
+  late final ValueNotifier<String?> _popups;
+
+  void _onPopupBlocked() {
+    final url = _popups.value;
+    if (url == null || !mounted) return;
+    final host = Uri.tryParse(url)?.host ?? url;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text('Pop-up blocked: $host'),
+        duration: const Duration(seconds: 3),
+        action: SnackBarAction(
+          label: 'Open anyway',
+          onPressed: () => ref.read(tabsProvider.notifier).newTab(url: url),
+        ),
+      ));
+    _popups.value = null;
+  }
 
   void _onNotice() {
     final msg = _notice.value;
@@ -129,6 +147,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     _downloads = ref.read(tabsProvider.notifier).downloadStarted
       ..addListener(_onDownloadStarted);
     _notice = ref.read(tabsProvider.notifier).notice..addListener(_onNotice);
+    _popups = ref.read(tabsProvider.notifier).popupBlocked..addListener(_onPopupBlocked);
     _addressFocus.addListener(() {
       final focused = _addressFocus.hasFocus;
       if (focused) {
@@ -148,6 +167,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     HomeTabNotifier.openDevToolsRoute = null;
     _downloads.removeListener(_onDownloadStarted);
     _notice.removeListener(_onNotice);
+    _popups.removeListener(_onPopupBlocked);
     _address.dispose();
     _addressFocus.dispose();
     _findText.dispose();

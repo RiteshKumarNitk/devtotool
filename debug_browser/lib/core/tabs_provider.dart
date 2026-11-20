@@ -194,6 +194,9 @@ class TabsNotifier extends Notifier<TabsState> {
   /// User-facing message, e.g. private browsing unsupported on this device.
   final notice = ValueNotifier<String?>(null);
 
+  /// URL of the last pop-up the blocker stopped (UI offers "Open anyway").
+  final popupBlocked = ValueNotifier<String?>(null);
+
   /// Private tabs whose WebView isn't in the private profile yet: never load.
   final Set<String> _awaitingProfile = {};
 
@@ -593,6 +596,7 @@ class TabsNotifier extends Notifier<TabsState> {
         prev.cosmetic == next.cosmetic &&
         prev.dark == next.dark &&
         prev.cookies == next.cookies &&
+        prev.popups == next.popups &&
         _sameExceptZoom(prev, next);
     if (zoomOnly) {
       _applyTextZoom(state.activeId, state.active.url);
@@ -605,7 +609,9 @@ class TabsNotifier extends Notifier<TabsState> {
     final keys = {...a.sites.keys, ...b.sites.keys};
     for (final k in keys) {
       final x = a.sites[k], y = b.sites[k];
-      if (x?.blocker != y?.blocker || x?.dark != y?.dark || x?.cookies != y?.cookies) return false;
+      if (x?.blocker != y?.blocker || x?.dark != y?.dark || x?.cookies != y?.cookies || x?.popups != y?.popups) {
+        return false;
+      }
     }
     return true;
   }
@@ -627,6 +633,18 @@ class TabsNotifier extends Notifier<TabsState> {
       if (!req.isMainFrame) return NavigationDecision.navigate;
       if (_forceNavigate.remove(req.url)) return NavigationDecision.navigate;
       final pending = _pendingNav.putIfAbsent(id, () => {});
+      // Page-initiated jumps to known ad / pop-under networks (not addresses
+      // the user typed, which are in `pending`).
+      if (!pending.contains(req.url) && _isAdRedirect(id, uri)) {
+        _patch(id, (t) => t.copyWith(
+              blockedCount: t.blockedCount + 1,
+              blockedDomains: {...t.blockedDomains, 'redirects': (t.blockedDomains['redirects'] ?? 0) + 1},
+            ));
+        ref.read(blockedTotalProvider.notifier).add(1);
+        ref.read(privacyStatsProvider.notifier).add(1);
+        if (id == state.activeId) notice.value = 'Blocked a redirect to ${uri.host}';
+        return NavigationDecision.prevent;
+      }
       if (pending.remove(req.url) || uri.scheme == 'data' && req.url.startsWith('data:application/')) {
         _startDownload(id, req.url);
         return NavigationDecision.prevent;
@@ -717,6 +735,16 @@ class TabsNotifier extends Notifier<TabsState> {
     }
   }
 
+  bool _isAdRedirect(String id, Uri target) {
+    final page = _tab(id)?.url ?? '';
+    final ext = ref.read(extensionsProvider);
+    if (!(ext.blockerOn(page) || ext.popupsOn(page))) return false;
+    if (isBlockerExempt(target.host)) return false;
+    final blocked = matchBlockedHost(target.host);
+    // Visiting the ad network's own site directly is the user's choice.
+    return blocked != null && matchBlockedHost(Uri.tryParse(page)?.host ?? '') == null;
+  }
+
   Future<void> _startDownload(String id, String url) async {
     final c = _controllers[id];
     final tab = _tab(id);
@@ -797,7 +825,9 @@ class TabsNotifier extends Notifier<TabsState> {
     }
     if (msg is BrowserActionMessage) {
       if (id != state.activeId) return;
-      if (msg.kind == 'open_tab') {
+      if (msg.kind == 'popup_blocked') {
+        popupBlocked.value = msg.href;
+      } else if (msg.kind == 'open_tab') {
         newTab(url: msg.href, private: _tab(id)?.isPrivate ?? false);
       } else if (msg.kind == 'blob_download' || msg.kind == 'download_link') {
         downloadUrl(msg.href, suggestedName: '${msg.data['name'] ?? ''}', tabId: id);

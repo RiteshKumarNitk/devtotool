@@ -406,6 +406,11 @@ const String debugSdkExtrasJs = r'''
         const href = absolute(a.getAttribute('href'));
         if (!/^https?:/.test(href)) return;
         e.preventDefault();
+        // An invisible full-screen link is a click-jacking ad, not a real link.
+        if (window.__dbg_overlayOf && window.__dbg_overlayOf(a)) {
+            window.__dbg_blockPopup && window.__dbg_blockPopup(href);
+            return;
+        }
         send('open_tab', { href: href });
     }, false);
     // Downloads the WebView can't do natively: blob:/data: links and
@@ -450,7 +455,15 @@ const String debugSdkExtrasJs = r'''
     const realOpen = window.open;
     window.open = function (url, name, features) {
         const href = absolute(url || '');
-        if (/^https?:/.test(href)) { send('open_tab', { href: href }); return null; }
+        if (/^https?:/.test(href)) {
+            // Pop-up blocker (extensions core) decides first.
+            if (window.__dbg_allowPopup && !window.__dbg_allowPopup(href)) {
+                window.__dbg_blockPopup(href);
+                return null;
+            }
+            send('open_tab', { href: href });
+            return null;
+        }
         return realOpen ? realOpen.apply(window, arguments) : null;
     };
 

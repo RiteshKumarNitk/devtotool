@@ -201,7 +201,7 @@ class SettingsPage extends ConsumerWidget {
               child: SizedBox(width: 48, height: 48, child: CustomPaint(painter: LogoPainter(background: true, scale: 0.86))),
             ),
             applicationName: 'Debug Browser',
-            applicationVersion: '1.8.0',
+            applicationVersion: '1.9.0',
             applicationLegalese: '© InnovateX Technology',
             aboutBoxChildren: [
               SizedBox(height: 12),

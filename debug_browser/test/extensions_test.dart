@@ -43,6 +43,35 @@ void main() {
     });
   });
 
+  group('pop-ups and redirects', () {
+    test('on by default, per-site exception, persists', () {
+      var s = const ExtensionSettings();
+      expect(s.popupsOn('https://any.test'), isTrue);
+      s = s.withSite('movies.test', (o) => o.copyWith(popups: () => false));
+      expect(s.popupsOn('https://www.movies.test/watch'), isFalse);
+      expect(s.popupsOn('https://other.test'), isTrue);
+      final back = ExtensionSettings.fromJson(jsonDecode(jsonEncode(s.toJson())));
+      expect(back.popupsOn('https://movies.test'), isFalse);
+      expect(extensionConfig(s)['popups'], isTrue);
+    });
+
+    test('copyWith keeps other per-site values', () {
+      const o = SiteOverride(blocker: false, dark: false, popups: false, textZoom: 120);
+      final d = o.copyWith(dark: () => null);
+      expect(d.blocker, isFalse);
+      expect(d.popups, isFalse);
+      expect(d.textZoom, 120);
+      expect(d.dark, isNull);
+    });
+
+    test('ad-network host matching for redirect blocking', () {
+      expect(matchBlockedHost('go.onclickads.net'), 'onclickads.net');
+      expect(matchBlockedHost('www.popads.net'), 'popads.net');
+      expect(matchBlockedHost('example.com'), isNull);
+      expect(matchBlockedHost('notpopads.net'), isNull, reason: 'no look-alike matches');
+    });
+  });
+
   group('user scripts', () {
     test('glob matching', () {
       const s = UserScript(id: '1', name: 'x', matches: ['https://*.example.com/*', 'http://localhost*']);

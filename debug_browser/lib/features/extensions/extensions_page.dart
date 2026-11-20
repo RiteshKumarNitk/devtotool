@@ -57,6 +57,13 @@ class ExtensionsPage extends ConsumerWidget {
             onChanged: s.blocker ? (v) => n.update((x) => x.copyWith(cosmetic: v)) : null,
           ),
           SwitchListTile(
+            secondary: const Icon(Icons.block),
+            title: const Text('Block pop-ups and redirects'),
+            subtitle: const Text('Stops pop-unders, ad redirects and invisible click-stealing layers'),
+            value: s.popups,
+            onChanged: (v) => n.update((x) => x.copyWith(popups: v)),
+          ),
+          SwitchListTile(
             secondary: const Icon(Icons.cookie_outlined),
             title: const Text('Hide cookie banners'),
             subtitle: const Text('Hides common consent pop-ups. Sites still see no consent given.'),

@@ -24,6 +24,12 @@ const defaultBlockDomains = <String>[
   'inmobi.com', 'mopub.com', 'admob.com', 'adsafeprotected.com', 'serving-sys.com', 'zedo.com', 'revcontent.com',
   'mgid.com', 'propellerads.com', 'popads.net', 'popcash.net', 'exoclick.com', 'adsterra.com', 'adroll.com',
   'quantcount.com', 'yieldlab.net', 'adition.com', 'onetag-sys.com', 'districtm.io', 'emxdgt.com',
+  // Pop-under / redirect ad networks (common on streaming sites)
+  'onclickads.net', 'onclkds.com', 'highperformanceformat.com', 'profitabledisplaynetwork.com',
+  'juicyads.com', 'trafficjunky.net', 'hilltopads.net', 'clickadu.com', 'monetag.com', 'a-ads.com',
+  'adcash.com', 'galaksion.com', 'ad-maven.com', 'admaven.com', 'richpush.co', 'pushground.com',
+  'evadav.com', 'realsrv.com', 'tsyndicate.com', 'exdynsrv.com', 'magsrv.com', 'popmyads.com',
+  'clickaine.com', 'trafficstars.com', 'adspyglass.com', 'whos.amung.us', 'histats.com',
   // Content recommendation widgets
   'taboola.com', 'outbrain.com', 'zergnet.com',
   // Measurement / tracking
@@ -53,6 +59,21 @@ String siteKey(String urlOrHost) {
   return h.startsWith('www.') ? h.substring(4) : h;
 }
 
+/// The blocklist entry matching [host] (or a parent domain), else null.
+String? matchBlockedHost(String host) {
+  var h = host.toLowerCase();
+  final set = _blockSet;
+  while (h.isNotEmpty) {
+    if (set.contains(h)) return h;
+    final dot = h.indexOf('.');
+    if (dot < 0) return null;
+    h = h.substring(dot + 1);
+  }
+  return null;
+}
+
+final Set<String> _blockSet = defaultBlockDomains.where((d) => !d.contains('/')).toSet();
+
 bool isBlockerExempt(String host) {
   final h = siteKey(host);
   return blockerExemptHosts.any((e) => h == e || h.endsWith('.$e'));
@@ -63,17 +84,35 @@ class SiteOverride {
   final bool? blocker;
   final bool? dark;
   final bool? cookies;
+  final bool? popups;
 
   /// Text size in percent (100 = default).
   final int? textZoom;
-  const SiteOverride({this.blocker, this.dark, this.cookies, this.textZoom});
+  const SiteOverride({this.blocker, this.dark, this.cookies, this.popups, this.textZoom});
 
-  bool get isEmpty => blocker == null && dark == null && cookies == null && (textZoom == null || textZoom == 100);
+  bool get isEmpty =>
+      blocker == null && dark == null && cookies == null && popups == null && (textZoom == null || textZoom == 100);
+
+  SiteOverride copyWith({
+    bool? Function()? blocker,
+    bool? Function()? dark,
+    bool? Function()? cookies,
+    bool? Function()? popups,
+    int? Function()? textZoom,
+  }) =>
+      SiteOverride(
+        blocker: blocker != null ? blocker() : this.blocker,
+        dark: dark != null ? dark() : this.dark,
+        cookies: cookies != null ? cookies() : this.cookies,
+        popups: popups != null ? popups() : this.popups,
+        textZoom: textZoom != null ? textZoom() : this.textZoom,
+      );
 
   Map<String, dynamic> toJson() => {
         if (blocker != null) 'blocker': blocker,
         if (dark != null) 'dark': dark,
         if (cookies != null) 'cookies': cookies,
+        if (popups != null) 'popups': popups,
         if (textZoom != null) 'textZoom': textZoom,
       };
 
@@ -84,6 +123,7 @@ class SiteOverride {
       blocker: b(j['blocker']),
       dark: b(j['dark']),
       cookies: b(j['cookies']),
+      popups: b(j['popups']),
       textZoom: (j['textZoom'] as num?)?.toInt(),
     );
   }
@@ -95,6 +135,9 @@ class ExtensionSettings {
   final bool cosmetic;
   final bool dark;
   final bool cookies;
+
+  /// Pop-up, pop-under and invisible-overlay blocking.
+  final bool popups;
   final Map<String, SiteOverride> sites;
 
   const ExtensionSettings({
@@ -102,6 +145,7 @@ class ExtensionSettings {
     this.cosmetic = true,
     this.dark = false,
     this.cookies = false,
+    this.popups = true,
     this.sites = const {},
   });
 
@@ -111,14 +155,23 @@ class ExtensionSettings {
   bool blockerOn(String host) => blocker && !isBlockerExempt(host) && (site(host).blocker ?? true);
   bool darkOn(String host) => dark && (site(host).dark ?? true);
   bool cookiesOn(String host) => cookies && (site(host).cookies ?? true);
+  bool popupsOn(String host) => popups && (site(host).popups ?? true);
   int textZoom(String host) => site(host).textZoom ?? 100;
 
-  ExtensionSettings copyWith({bool? blocker, bool? cosmetic, bool? dark, bool? cookies, Map<String, SiteOverride>? sites}) =>
+  ExtensionSettings copyWith({
+    bool? blocker,
+    bool? cosmetic,
+    bool? dark,
+    bool? cookies,
+    bool? popups,
+    Map<String, SiteOverride>? sites,
+  }) =>
       ExtensionSettings(
         blocker: blocker ?? this.blocker,
         cosmetic: cosmetic ?? this.cosmetic,
         dark: dark ?? this.dark,
         cookies: cookies ?? this.cookies,
+        popups: popups ?? this.popups,
         sites: sites ?? this.sites,
       );
 
@@ -139,6 +192,7 @@ class ExtensionSettings {
         'cosmetic': cosmetic,
         'dark': dark,
         'cookies': cookies,
+        'popups': popups,
         'sites': {for (final e in sites.entries) e.key: e.value.toJson()},
       };
 
@@ -150,6 +204,7 @@ class ExtensionSettings {
       cosmetic: j['cosmetic'] != false,
       dark: j['dark'] == true,
       cookies: j['cookies'] == true,
+      popups: j['popups'] != false,
       sites: sites is Map ? {for (final e in sites.entries) '${e.key}': SiteOverride.fromJson(e.value)} : const {},
     );
   }
@@ -300,6 +355,7 @@ Map<String, dynamic> extensionConfig(ExtensionSettings s) => {
       'cosmetic': s.cosmetic,
       'dark': s.dark,
       'cookies': s.cookies,
+      'popups': s.popups,
       'blockDomains': defaultBlockDomains.where((d) => !d.contains('/')).toList(),
       'sites': {
         for (final e in s.sites.entries) e.key: e.value.toJson(),

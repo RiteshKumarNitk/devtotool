@@ -137,6 +137,7 @@ BridgeMessage? parseBridgeMessage(String raw) {
     case 'open_tab':
     case 'link_menu':
     case 'download_link':
+    case 'popup_blocked':
       final href = map['href'];
       // Only web links may open tabs from page content.
       if (href is! String || !(href.startsWith('http://') || href.startsWith('https://'))) return null;

@@ -142,6 +142,103 @@ const String extensionsCoreJs = r'''
         ].join(',') + '{display:none!important}', '__dbg_cosmetic');
     }
 
+    // ------------------------------------------- pop-ups and click-jacking
+    // Chrome-like rule: a page may only open a new window when the user just
+    // tapped a real link to that site. Invisible full-screen layers that
+    // steal the first tap are removed. Runs in every frame (ad iframes call
+    // window.open too).
+    var popupsOn = CFG.popups && siteSetting('popups', true);
+    var lastGesture = 0, lastTarget = null;
+    ['pointerdown', 'touchstart', 'mousedown', 'keydown', 'click'].forEach(function (type) {
+        window.addEventListener(type, function (e) { lastGesture = Date.now(); lastTarget = e.target; }, true);
+    });
+    function hostOf(u) { try { return new URL(u, location.href).hostname.replace(/^www\./, ''); } catch (e) { return ''; } }
+    function sameSite(a, b) { return !!a && !!b && (a === b || a.slice(-b.length - 1) === '.' + b || b.slice(-a.length - 1) === '.' + a); }
+    var pageHost = (location.hostname || '').replace(/^www\./, '');
+
+    function visuallyEmpty(n, cs) {
+        if (/^(IFRAME|VIDEO|CANVAS|IMG|EMBED|OBJECT)$/.test(n.tagName)) return false;
+        if (n.querySelector('iframe,video,canvas,embed,object')) return false; // players stay
+        if ((n.innerText || n.textContent || '').trim().length > 3) return false;
+        var opacity = parseFloat(cs.opacity);
+        if (n.querySelector('img,svg,picture') && !(opacity < 0.15)) return false;
+        var bg = cs.backgroundColor || '';
+        var transparent = bg === 'transparent' || /rgba\([^)]*,\s*0(\.0+)?\)$/.test(bg);
+        return transparent || opacity < 0.15;
+    }
+    /** The invisible click-jacking layer containing el, or null. */
+    function overlayOf(el) {
+        var vw = window.innerWidth, vh = window.innerHeight;
+        for (var n = el; n && n.nodeType === 1 && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+            var cs = getComputedStyle(n);
+            if (cs.position !== 'fixed' && cs.position !== 'absolute') continue;
+            var r = n.getBoundingClientRect();
+            if (r.width * r.height < vw * vh * 0.5) continue;
+            if (!visuallyEmpty(n, cs)) continue;
+            var link = n.closest('a[href]') || n.querySelector('a[href]');
+            var foreignLink = link && !sameSite(hostOf(link.href), pageHost);
+            var onTop = (parseInt(cs.zIndex, 10) || 0) >= 999;
+            if (foreignLink || onTop) return n;
+        }
+        return null;
+    }
+    function reportBlocked(kind, n) {
+        var d = {}; d[kind] = n || 1;
+        send('blocked', { n: n || 1, domains: d });
+    }
+    function allowPopup(url) {
+        if (!popupsOn) return true;
+        if (Date.now() - lastGesture > 1000) return false;          // not from a tap
+        var target = hostOf(url);
+        if (sameSite(target, pageHost)) return true;                // own site (e.g. sign-in)
+        var a = lastTarget && lastTarget.closest ? lastTarget.closest('a[href]') : null;
+        if (a && !overlayOf(a) && sameSite(hostOf(a.href), target)) return true; // tapped a real link to it
+        return false;                                                // tap elsewhere -> pop-under
+    }
+    function blockPopup(url) {
+        reportBlocked('pop-ups');
+        try { send('popup_blocked', { href: new URL(url, location.href).href }); } catch (e) { }
+    }
+    window.__dbg_allowPopup = allowPopup;
+    window.__dbg_blockPopup = blockPopup;
+    window.__dbg_overlayOf = overlayOf;
+
+    if (popupsOn) {
+        var nativeOpen = window.open;
+        window.open = function (url) {
+            if (!allowPopup(url || '')) { blockPopup(url || ''); return null; }
+            return nativeOpen ? nativeOpen.apply(window, arguments) : null;
+        };
+        // Swallow the tap that lands on an invisible layer, and remove it,
+        // so the next tap reaches the real content.
+        var guard = function (e) {
+            var ov = overlayOf(e.target);
+            if (!ov) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            ov.remove();
+            reportBlocked('hidden overlays');
+        };
+        window.addEventListener('pointerdown', guard, true);
+        window.addEventListener('click', guard, true);
+        // Also sweep likely layers as the page builds itself.
+        var sweepTimer = null;
+        var sweep = function () {
+            sweepTimer = null;
+            if (!document.body) return;
+            var removed = 0;
+            var candidates = document.querySelectorAll('body > *, [style*="z-index"], a[style*="position"], div[style*="position"]');
+            for (var i = 0; i < candidates.length && i < 400; i++) {
+                var el = candidates[i];
+                if (el.isConnected && overlayOf(el) === el) { el.remove(); removed++; }
+            }
+            if (removed) reportBlocked('hidden overlays', removed);
+        };
+        document.addEventListener('DOMContentLoaded', sweep);
+        new MutationObserver(function () { if (!sweepTimer) sweepTimer = setTimeout(sweep, 400); })
+            .observe(document.documentElement, { childList: true, subtree: true });
+    }
+
     if (!isTop) return;
 
     // ---------------------------------------------------------- dark mode
