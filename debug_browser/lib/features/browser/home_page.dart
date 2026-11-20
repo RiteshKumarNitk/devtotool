@@ -501,12 +501,16 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
                   child: Stack(
                     children: [
                       Positioned.fill(
-                        child: _WebArea(
-                          tab: tab,
-                          controller: ref
-                              .read(tabsProvider.notifier)
-                              .controllerFor(tab.id),
-                          onSearchTap: () => _addressFocus.requestFocus(),
+                        child: TabTransition(
+                          tabId: tab.id,
+                          direction: ref.read(tabsProvider.notifier).lastSwitchDirection,
+                          child: _WebArea(
+                            tab: tab,
+                            controller: ref
+                                .read(tabsProvider.notifier)
+                                .controllerFor(tab.id),
+                            onSearchTap: () => _addressFocus.requestFocus(),
+                          ),
                         ),
                       ),
                       if (tab.isPrivate && ref.watch(privateLockProvider))
@@ -935,11 +939,21 @@ class _BottomBar extends ConsumerWidget {
                     ),
                     borderRadius: BorderRadius.circular(5),
                   ),
-                  child: Text(
-                    tabCount > 99 ? ':D' : '$tabCount',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
+                  // The count pops when tabs are opened or closed.
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 260),
+                    transitionBuilder: (child, anim) => ScaleTransition(
+                      scale: Tween(begin: 0.4, end: 1.0)
+                          .animate(CurvedAnimation(parent: anim, curve: Curves.elasticOut)),
+                      child: FadeTransition(opacity: anim, child: child),
+                    ),
+                    child: Text(
+                      tabCount > 99 ? ':D' : '$tabCount',
+                      key: ValueKey(tabCount),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
@@ -1375,6 +1389,58 @@ class _ReadAloudBar extends ConsumerWidget {
           ]),
         ),
       ]),
+    );
+  }
+}
+
+
+/// Animates changing tabs: slide from the right/left when moving to the
+/// next/previous tab (swipe on the address bar, new tab), and fade + slight
+/// zoom when jumping (tab switcher, closing a tab). Navigating within a tab
+/// doesn't animate (same key).
+class TabTransition extends StatelessWidget {
+  final String tabId;
+
+  /// +1 next, -1 previous, 0 jump.
+  final int direction;
+  final Widget child;
+  const TabTransition({super.key, required this.tabId, required this.direction, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final reduce = MediaQuery.of(context).disableAnimations;
+    return ClipRect(
+      child: AnimatedSwitcher(
+        duration: reduce ? Duration.zero : Duration(milliseconds: direction == 0 ? 260 : 320),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        layoutBuilder: (current, previous) => Stack(
+          fit: StackFit.expand,
+          children: [...previous, ?current],
+        ),
+        transitionBuilder: (child, anim) {
+          final incoming = child.key == ValueKey(tabId);
+          if (direction == 0) {
+            return FadeTransition(
+              opacity: anim,
+              child: ScaleTransition(
+                scale: Tween(begin: incoming ? 0.94 : 1.03, end: 1.0).animate(anim),
+                child: child,
+              ),
+            );
+          }
+          // Incoming enters from the swipe side; outgoing leaves the other way.
+          final from = Offset((incoming ? direction : -direction).toDouble(), 0);
+          return SlideTransition(
+            position: Tween(begin: from, end: Offset.zero).animate(anim),
+            child: FadeTransition(
+              opacity: Tween(begin: 0.6, end: 1.0).animate(anim),
+              child: child,
+            ),
+          );
+        },
+        child: KeyedSubtree(key: ValueKey(tabId), child: child),
+      ),
     );
   }
 }

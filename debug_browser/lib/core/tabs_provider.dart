@@ -349,7 +349,10 @@ class TabsNotifier extends Notifier<TabsState> {
     // Like Chrome: open next to the current tab.
     tabs.insert(state.activeIndex + 1, tab);
     state = TabsState(tabs, activate ? id : state.activeId);
-    if (activate) _onActivated(id);
+    if (activate) {
+      lastSwitchDirection = 1; // new tabs open to the right
+      _onActivated(id);
+    }
     _persist();
     return id;
   }
@@ -368,10 +371,12 @@ class TabsNotifier extends Notifier<TabsState> {
     if (tabs.isEmpty) {
       final fresh = BrowserTab(id: _newId(), url: _settings.homepage, loaded: false);
       _controllers[fresh.id] = _createController(fresh.id);
+      lastSwitchDirection = 0;
       state = TabsState([fresh], fresh.id);
       _onActivated(fresh.id);
     } else if (id == state.activeId) {
       final next = tabs[i.clamp(0, tabs.length - 1)];
+      lastSwitchDirection = 0; // closing a tab: fade to the neighbour
       state = TabsState(tabs, next.id);
       _onActivated(next.id);
     } else {
@@ -406,7 +411,7 @@ class TabsNotifier extends Notifier<TabsState> {
     final same = state.tabs.where((t) => t.isPrivate == private).toList();
     if (same.length < 2) return;
     final i = same.indexWhere((t) => t.id == state.activeId);
-    activate(same[(i + delta + same.length) % same.length].id);
+    activate(same[(i + delta + same.length) % same.length].id, direction: delta.sign);
   }
 
   /// Closes every private tab (and wipes private data).
@@ -423,8 +428,13 @@ class TabsNotifier extends Notifier<TabsState> {
     closeTab(state.activeId);
   }
 
-  void activate(String id) {
+  /// How the last tab change happened, for the page transition:
+  /// +1 next (slide from right), -1 previous (from left), 0 jump (fade).
+  int lastSwitchDirection = 0;
+
+  void activate(String id, {int direction = 0}) {
     if (id == state.activeId || !_controllers.containsKey(id)) return;
+    lastSwitchDirection = direction;
     state = TabsState(state.tabs, id);
     _onActivated(id);
     _persist();
