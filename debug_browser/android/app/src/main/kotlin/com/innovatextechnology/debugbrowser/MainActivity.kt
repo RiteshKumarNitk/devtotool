@@ -1,5 +1,6 @@
 package com.innovatextechnology.debugbrowser
 
+import android.app.role.RoleManager
 import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Intent
@@ -7,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -21,9 +23,91 @@ import java.io.File
  */
 class MainActivity : FlutterActivity() {
     private val channelName = "com.innovatextechnology.debugbrowser/downloads"
+    private val linksChannelName = "com.innovatextechnology.debugbrowser/links"
+    private val roleRequestCode = 4711
+
+    private var linksChannel: MethodChannel? = null
+    private var pendingRoleResult: MethodChannel.Result? = null
+
+    /** Link this activity was launched with (consumed once by Flutter). */
+    private var initialUrl: String? = null
+
+    private fun webUrlOf(intent: Intent?): String? {
+        if (intent?.action != Intent.ACTION_VIEW) return null
+        val url = intent.dataString ?: return null
+        return if (url.startsWith("http://") || url.startsWith("https://")) url else null
+    }
+
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        initialUrl = webUrlOf(intent)
+        super.onCreate(savedInstanceState)
+    }
+
+    /** A link opened from another app while we're running: new tab. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        webUrlOf(intent)?.let { linksChannel?.invokeMethod("openUrl", it) }
+    }
+
+    private fun isDefaultBrowser(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val rm = getSystemService(RoleManager::class.java)
+            return rm != null && rm.isRoleAvailable(RoleManager.ROLE_BROWSER) && rm.isRoleHeld(RoleManager.ROLE_BROWSER)
+        }
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))
+        val info = packageManager.resolveActivity(probe, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+        return info?.activityInfo?.packageName == packageName
+    }
+
+    /** Shows the system "Set as default browser?" dialog (Android 10+). */
+    private fun requestDefaultBrowser(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val rm = getSystemService(RoleManager::class.java)
+            if (rm != null && rm.isRoleAvailable(RoleManager.ROLE_BROWSER)) {
+                if (rm.isRoleHeld(RoleManager.ROLE_BROWSER)) {
+                    result.success(true)
+                    return
+                }
+                pendingRoleResult = result
+                @Suppress("DEPRECATION")
+                startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_BROWSER), roleRequestCode)
+                return
+            }
+        }
+        // Older Android: open the default-apps settings screen.
+        try {
+            startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+        } catch (e: ActivityNotFoundException) {
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+        }
+        result.success(false)
+    }
+
+    @Deprecated("Required for RoleManager on API 29")
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == roleRequestCode) {
+            pendingRoleResult?.success(isDefaultBrowser())
+            pendingRoleResult = null
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        linksChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, linksChannelName).also { ch ->
+            ch.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "takeInitialUrl" -> {
+                        result.success(initialUrl)
+                        initialUrl = null
+                    }
+                    "isDefaultBrowser" -> result.success(isDefaultBrowser())
+                    "requestDefaultBrowser" -> requestDefaultBrowser(result)
+                    else -> result.notImplemented()
+                }
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BrowserBridge.CHANNEL)
             .setMethodCallHandler(BrowserBridge(flutterEngine))
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->

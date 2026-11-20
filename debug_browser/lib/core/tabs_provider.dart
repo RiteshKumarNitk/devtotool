@@ -12,6 +12,7 @@ import 'browser_native.dart';
 import 'browser_settings.dart';
 import 'downloads.dart';
 import 'extensions.dart';
+import 'home_stats.dart';
 import 'js_bridge.dart';
 import 'providers.dart';
 import 'scripts/debug_sdk_extras.dart';
@@ -43,6 +44,13 @@ class BrowserTab {
   final int blockedCount;
   final Map<String, int> blockedDomains;
 
+  /// Last real page in this tab's WebView (kept while the New Tab page shows).
+  final String? lastWebUrl;
+  final String? lastWebTitle;
+
+  /// The tab came from the New Tab page: back at the start returns to it.
+  final bool ntpBehind;
+
   const BrowserTab({
     required this.id,
     required this.url,
@@ -56,10 +64,21 @@ class BrowserTab {
     this.isPrivate = false,
     this.blockedCount = 0,
     this.blockedDomains = const {},
+    this.lastWebUrl,
+    this.lastWebTitle,
+    this.ntpBehind = false,
   });
 
+  bool get isNewTab => url == newTabUrl;
   bool get isSecure => url.startsWith('https://');
-  String get displayTitle => title.isNotEmpty ? title : (Uri.tryParse(url)?.host ?? url);
+  String get displayTitle => isNewTab
+      ? (isPrivate ? 'Private tab' : 'New tab')
+      : title.isNotEmpty
+          ? title
+          : (Uri.tryParse(url)?.host ?? url);
+
+  /// Whether Back does something (page history, or the New Tab page).
+  bool get canNavigateBack => isNewTab ? lastWebUrl != null : (canGoBack || ntpBehind);
 
   BrowserTab copyWith({
     String? url,
@@ -72,6 +91,9 @@ class BrowserTab {
     bool? loaded,
     int? blockedCount,
     Map<String, int>? blockedDomains,
+    String? Function()? lastWebUrl,
+    String? Function()? lastWebTitle,
+    bool? ntpBehind,
   }) =>
       BrowserTab(
         id: id,
@@ -86,6 +108,9 @@ class BrowserTab {
         isPrivate: isPrivate,
         blockedCount: blockedCount ?? this.blockedCount,
         blockedDomains: blockedDomains ?? this.blockedDomains,
+        lastWebUrl: lastWebUrl != null ? lastWebUrl() : this.lastWebUrl,
+        lastWebTitle: lastWebTitle != null ? lastWebTitle() : this.lastWebTitle,
+        ntpBehind: ntpBehind ?? this.ntpBehind,
       );
 }
 
@@ -202,7 +227,7 @@ class TabsNotifier extends Notifier<TabsState> {
     if (saved is Map && saved['tabs'] is List) {
       for (final t in (saved['tabs'] as List).whereType<Map>().take(maxTabs)) {
         final url = '${t['url'] ?? ''}';
-        if (!url.startsWith('http')) continue;
+        if (!url.startsWith('http') && url != newTabUrl) continue;
         restored.add(BrowserTab(id: _newId(), url: url, title: '${t['title'] ?? ''}', loaded: false));
       }
       activeIndex = (saved['active'] as num?)?.toInt() ?? 0;
@@ -316,6 +341,10 @@ class TabsNotifier extends Notifier<TabsState> {
     if (id == state.activeId) {
       ref.read(webViewControllerProvider.notifier).setController(_controllers[id]!);
     }
+    if (!tab.loaded && tab.isNewTab) {
+      _patch(id, (t) => t.copyWith(loaded: true));
+      return;
+    }
     if (!tab.loaded) {
       _patch(id, (t) => t.copyWith(loaded: true));
       final ready = _extReady[id] ?? Future<void>.value();
@@ -332,7 +361,19 @@ class TabsNotifier extends Notifier<TabsState> {
 
   void loadUri(Uri uri, {String? tabId}) {
     final id = tabId ?? state.activeId;
-    _patch(id, (t) => t.copyWith(url: uri.toString(), loaded: true, error: () => null));
+    if (uri.toString() == newTabUrl) {
+      showNewTabPage(tabId: id);
+      return;
+    }
+    final fromNtp = _tab(id)?.isNewTab ?? false;
+    _patch(id, (t) => t.copyWith(
+          url: uri.toString(),
+          loaded: true,
+          error: () => null,
+          // Back from the first page returns to the New Tab page, unless
+          // the WebView already has history of its own.
+          ntpBehind: fromNtp ? t.lastWebUrl == null : t.ntpBehind,
+        ));
     _sdkActive.remove(id);
     _pendingNav.putIfAbsent(id, () => {}).add(uri.toString());
     _controllers[id]?.loadRequest(uri);
@@ -340,9 +381,49 @@ class TabsNotifier extends Notifier<TabsState> {
 
   void goHome() => loadUri(normaliseUrlInput(_settings.homepage));
 
+  /// Shows the built-in New Tab page in a tab, keeping its WebView page.
+  void showNewTabPage({String? tabId}) {
+    final id = tabId ?? state.activeId;
+    _patch(id, (t) => t.copyWith(
+          url: newTabUrl,
+          title: '',
+          loaded: true,
+          isLoading: false,
+          error: () => null,
+          blockedCount: 0,
+          blockedDomains: const {},
+        ));
+    if (id == state.activeId) {
+      ref.read(currentPageProvider.notifier).set('', 'New tab');
+      ref.read(pageDataProvider.notifier).clear();
+    }
+    _persist();
+  }
+
+  /// Whether Back can do something in the active tab.
+  Future<bool> canGoBackNow() async {
+    final tab = state.active;
+    if (tab.isNewTab) return tab.lastWebUrl != null;
+    return await activeController.canGoBack() || tab.ntpBehind;
+  }
+
   Future<void> goBack() async {
+    final tab = state.active;
+    if (tab.isNewTab) {
+      // Return to the page the New Tab page was opened over.
+      if (tab.lastWebUrl != null) {
+        _patch(tab.id, (t) => t.copyWith(url: t.lastWebUrl, title: t.lastWebTitle ?? ''));
+        ref.read(currentPageProvider.notifier).set(tab.lastWebUrl!, tab.lastWebTitle ?? '');
+      }
+      return;
+    }
     final c = activeController;
-    if (await c.canGoBack()) await c.goBack();
+    if (await c.canGoBack()) {
+      await c.goBack();
+    } else if (tab.ntpBehind) {
+      _patch(tab.id, (t) => t.copyWith(ntpBehind: false));
+      showNewTabPage(tabId: tab.id);
+    }
   }
 
   Future<void> goForward() async {
@@ -352,6 +433,7 @@ class TabsNotifier extends Notifier<TabsState> {
 
   void reload() {
     final tab = state.active;
+    if (tab.isNewTab) return;
     _sdkActive.remove(tab.id);
     if (tab.error != null) {
       loadUri(normaliseUrlInput(tab.url));
@@ -419,13 +501,19 @@ class TabsNotifier extends Notifier<TabsState> {
         onProgress: (p) => _patch(id, (t) => t.copyWith(progress: p / 100.0)),
         onUrlChange: (change) {
           final url = change.url;
-          if (url != null) _patch(id, (t) => t.copyWith(url: url));
+          if (url == null) return;
+          if (_tab(id)?.isNewTab == true) {
+            _patch(id, (t) => t.copyWith(lastWebUrl: () => url));
+          } else {
+            _patch(id, (t) => t.copyWith(url: url));
+          }
         },
         onPageStarted: (url) {
           _sdkActive.remove(id);
           _pendingNav[id]?.clear();
           _patch(id, (t) => t.copyWith(blockedCount: 0, blockedDomains: const {}));
           _applyTextZoom(id, url);
+          if (_tab(id)?.isNewTab == true) return;
           _patch(id, (t) => t.copyWith(url: url, isLoading: true, progress: 0.05, error: () => null));
           if (id == state.activeId) {
             ref.read(pageDataProvider.notifier).clear();
@@ -676,8 +764,21 @@ class TabsNotifier extends Notifier<TabsState> {
     final title = await c.getTitle() ?? '';
     final back = await c.canGoBack();
     final fwd = await c.canGoForward();
-    _patch(id, (t) => t.copyWith(url: url, title: title, isLoading: false, progress: 1, canGoBack: back, canGoForward: fwd));
-    if (id == state.activeId) ref.read(currentPageProvider.notifier).set(url, title);
+    if (_tab(id)?.isNewTab == true) {
+      _patch(id, (t) => t.copyWith(lastWebUrl: () => url, lastWebTitle: () => title, canGoBack: back, canGoForward: fwd));
+    } else {
+      _patch(id, (t) => t.copyWith(
+            url: url,
+            title: title,
+            isLoading: false,
+            progress: 1,
+            canGoBack: back,
+            canGoForward: fwd,
+            lastWebUrl: () => url,
+            lastWebTitle: () => title,
+          ));
+    }
+    if (id == state.activeId && _tab(id)?.isNewTab != true) ref.read(currentPageProvider.notifier).set(url, title);
     if (_tab(id)?.isPrivate != true) ref.read(historyProvider.notifier).record(url, title);
     _persist();
   }
@@ -691,6 +792,7 @@ class TabsNotifier extends Notifier<TabsState> {
         return t.copyWith(blockedCount: t.blockedCount + msg.count, blockedDomains: domains);
       });
       ref.read(blockedTotalProvider.notifier).add(msg.count);
+      ref.read(privacyStatsProvider.notifier).add(msg.count);
       return;
     }
     if (msg is BrowserActionMessage) {

@@ -7,8 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('search engine', () {
-    test('default homepage is Google', () {
-      expect(const BrowserSettings().homepage, 'https://www.google.com');
+    test('home is the New Tab page by default; Google when it is turned off', () {
+      expect(const BrowserSettings().homepage, newTabUrl);
+      expect(const BrowserSettings(newTabPage: false).homepage, 'https://www.google.com');
     });
 
     test('custom homepage overrides engine home', () {

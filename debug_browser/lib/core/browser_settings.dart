@@ -21,6 +21,24 @@ enum SearchEngine {
       values.firstWhere((e) => e.name == name, orElse: () => SearchEngine.google);
 }
 
+/// Internal address of the built-in New Tab page.
+const newTabUrl = 'app://newtab';
+
+/// Background themes for the New Tab page.
+enum NewTabTheme {
+  aurora('Aurora'),
+  sunset('Sunset'),
+  ocean('Ocean'),
+  forest('Forest'),
+  midnight('Midnight'),
+  plain('Plain');
+
+  const NewTabTheme(this.label);
+  final String label;
+
+  static NewTabTheme byName(Object? n) => values.firstWhere((e) => e.name == n, orElse: () => NewTabTheme.aurora);
+}
+
 @immutable
 class BrowserSettings {
   final SearchEngine engine;
@@ -34,6 +52,12 @@ class BrowserSettings {
   /// Ask before the back button closes the app.
   final bool confirmExit;
 
+  /// Home and new tabs show the built-in New Tab page (else the engine/custom).
+  final bool newTabPage;
+  final NewTabTheme newTabTheme;
+  final bool showStats;
+  final bool showTopSites;
+
   const BrowserSettings({
     this.engine = SearchEngine.google,
     this.customHomepage = '',
@@ -41,9 +65,16 @@ class BrowserSettings {
     this.desktopMode = false,
     this.restoreTabs = true,
     this.confirmExit = true,
+    this.newTabPage = true,
+    this.newTabTheme = NewTabTheme.aurora,
+    this.showStats = true,
+    this.showTopSites = true,
   });
 
-  String get homepage => customHomepage.trim().isEmpty ? engine.home : customHomepage.trim();
+  String get homepage {
+    if (customHomepage.trim().isNotEmpty) return customHomepage.trim();
+    return newTabPage ? newTabUrl : engine.home;
+  }
 
   BrowserSettings copyWith({
     SearchEngine? engine,
@@ -52,6 +83,10 @@ class BrowserSettings {
     bool? desktopMode,
     bool? restoreTabs,
     bool? confirmExit,
+    bool? newTabPage,
+    NewTabTheme? newTabTheme,
+    bool? showStats,
+    bool? showTopSites,
   }) =>
       BrowserSettings(
         engine: engine ?? this.engine,
@@ -60,6 +95,10 @@ class BrowserSettings {
         desktopMode: desktopMode ?? this.desktopMode,
         restoreTabs: restoreTabs ?? this.restoreTabs,
         confirmExit: confirmExit ?? this.confirmExit,
+        newTabPage: newTabPage ?? this.newTabPage,
+        newTabTheme: newTabTheme ?? this.newTabTheme,
+        showStats: showStats ?? this.showStats,
+        showTopSites: showTopSites ?? this.showTopSites,
       );
 
   Map<String, dynamic> toJson() => {
@@ -68,6 +107,10 @@ class BrowserSettings {
         'showDebugBubble': showDebugBubble,
         'restoreTabs': restoreTabs,
         'confirmExit': confirmExit,
+        'newTabPage': newTabPage,
+        'newTabTheme': newTabTheme.name,
+        'showStats': showStats,
+        'showTopSites': showTopSites,
         // desktopMode is per-session on purpose (like Chrome's "Desktop site").
       };
 
@@ -79,6 +122,10 @@ class BrowserSettings {
       showDebugBubble: j['showDebugBubble'] != false,
       restoreTabs: j['restoreTabs'] != false,
       confirmExit: j['confirmExit'] != false,
+      newTabPage: j['newTabPage'] != false,
+      newTabTheme: NewTabTheme.byName(j['newTabTheme']),
+      showStats: j['showStats'] != false,
+      showTopSites: j['showTopSites'] != false,
     );
   }
 }

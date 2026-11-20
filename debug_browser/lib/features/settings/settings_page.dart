@@ -9,6 +9,8 @@ import '../../core/providers.dart';
 import '../../core/tabs_provider.dart';
 import '../../core/tool_providers.dart';
 import 'proxy_page.dart';
+import '../../core/home_stats.dart';
+import '../newtab/new_tab_page.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -118,6 +120,24 @@ class SettingsPage extends ConsumerWidget {
             ),
           ),
           ListTile(
+            leading: const Icon(Icons.open_in_browser),
+            title: const Text('Default browser'),
+            subtitle: Text(switch (ref.watch(isDefaultBrowserProvider)) {
+              AsyncData(value: true) => 'Debug Browser opens links from other apps',
+              _ => 'Tap to open links from other apps here',
+            }),
+            onTap: () async {
+              await SystemBrowser.requestDefault();
+              ref.invalidate(isDefaultBrowserProvider);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.dashboard_customize_outlined),
+            title: const Text('New Tab page'),
+            subtitle: Text(s.newTabPage ? 'On: ${s.newTabTheme.label} theme' : 'Off'),
+            onTap: () => showCustomizeSheet(context),
+          ),
+          ListTile(
             leading: const Icon(Icons.home_outlined),
             title: const Text('Homepage'),
             subtitle: Text(s.homepage),
@@ -181,7 +201,7 @@ class SettingsPage extends ConsumerWidget {
               child: SizedBox(width: 48, height: 48, child: CustomPaint(painter: LogoPainter(background: true, scale: 0.86))),
             ),
             applicationName: 'Debug Browser',
-            applicationVersion: '1.7.0',
+            applicationVersion: '1.8.0',
             applicationLegalese: '© InnovateX Technology',
             aboutBoxChildren: [
               SizedBox(height: 12),

@@ -12,6 +12,8 @@ import '../../core/tabs_provider.dart';
 import '../../core/thumbnails.dart';
 import '../../core/tool_providers.dart';
 import '../devtools/devtools_page.dart';
+import '../newtab/new_tab_page.dart';
+import '../../core/home_stats.dart';
 import '../../core/extensions.dart';
 import '../extensions/site_sheet.dart';
 import 'browser_menu.dart';
@@ -119,13 +121,19 @@ class _HomePageState extends ConsumerState<HomePage> {
   void initState() {
     super.initState();
     HomeTabNotifier.openDevToolsRoute = _openDevTools;
+    // Links opened from other apps (when this is the default browser).
+    SystemBrowser.listen((url) => ref.read(tabsProvider.notifier).newTab(url: url));
+    SystemBrowser.takeInitialUrl().then((url) {
+      if (url != null && mounted) ref.read(tabsProvider.notifier).newTab(url: url);
+    });
     _downloads = ref.read(tabsProvider.notifier).downloadStarted
       ..addListener(_onDownloadStarted);
     _notice = ref.read(tabsProvider.notifier).notice..addListener(_onNotice);
     _addressFocus.addListener(() {
       final focused = _addressFocus.hasFocus;
       if (focused) {
-        _address.text = ref.read(tabsProvider).active.url;
+        final active = ref.read(tabsProvider).active;
+        _address.text = active.isNewTab ? '' : active.url;
         _address.selection = TextSelection(
           baseOffset: 0,
           extentOffset: _address.text.length,
@@ -380,9 +388,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         if (didPop) return;
         if (_finding) return _closeFind();
         if (_editing) return _addressFocus.unfocus();
-        final c = ref.read(tabsProvider.notifier).activeController;
-        if (await c.canGoBack()) {
-          await c.goBack();
+        final tabs = ref.read(tabsProvider.notifier);
+        if (await tabs.canGoBackNow()) {
+          await tabs.goBack();
         } else {
           await _onBackAtStart();
         }
@@ -414,6 +422,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                           controller: ref
                               .read(tabsProvider.notifier)
                               .controllerFor(tab.id),
+                          onSearchTap: () => _addressFocus.requestFocus(),
                         ),
                       ),
                       if (tab.error != null)
@@ -502,10 +511,17 @@ class _ShieldButton extends ConsumerWidget {
 class _WebArea extends ConsumerWidget {
   final BrowserTab tab;
   final WebViewController controller;
-  const _WebArea({required this.tab, required this.controller});
+  final VoidCallback onSearchTap;
+  const _WebArea({required this.tab, required this.controller, required this.onSearchTap});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (tab.isNewTab) {
+      return Screenshot(
+        controller: ref.watch(screenshotControllerProvider),
+        child: NewTabPage(key: ValueKey('ntp-${tab.id}'), onSearchTap: onSearchTap, isPrivate: tab.isPrivate),
+      );
+    }
     final viewport = ref.watch(viewportProvider);
     // Keyed by tab id: switching tabs swaps the native WebView.
     final web = WebViewWidget(key: ValueKey(tab.id), controller: controller);
@@ -571,6 +587,7 @@ class _AddressBar extends ConsumerWidget {
 
   /// "https://www.example.com/path" -> "example.com/path"
   static String displayUrl(String url) {
+    if (url == newTabUrl) return '';
     var s = url
         .replaceFirst(RegExp(r'^https?://'), '')
         .replaceFirst(RegExp(r'^www\.'), '');
@@ -622,7 +639,7 @@ class _AddressBar extends ConsumerWidget {
                     ),
                     const SizedBox(width: 6),
                   ],
-                  if (editing)
+                  if (editing || tab.isNewTab)
                     Icon(Icons.search, size: 20, color: scheme.onSurfaceVariant)
                   else
                     GestureDetector(
@@ -654,7 +671,7 @@ class _AddressBar extends ConsumerWidget {
                       onSubmitted: onSubmit,
                     ),
                   ),
-                  if (!editing) _ShieldButton(tab: tab),
+                  if (!editing && !tab.isNewTab) _ShieldButton(tab: tab),
                   if (editing)
                     IconButton(
                       tooltip: 'Clear',
@@ -749,7 +766,7 @@ class _BottomBar extends ConsumerWidget {
               IconButton(
                 tooltip: 'Back',
                 icon: const Icon(Icons.arrow_back),
-                onPressed: tab.canGoBack ? tabs.goBack : null,
+                onPressed: tab.canNavigateBack ? tabs.goBack : null,
               ),
               IconButton(
                 tooltip: 'Forward',
