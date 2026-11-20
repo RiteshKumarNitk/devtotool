@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/tabs_provider.dart';
+import '../../core/favicons.dart';
 
 /// Grid of open tabs with Chrome-style "Tabs" / "Private" sections.
 class TabSwitcherPage extends ConsumerStatefulWidget {
@@ -144,12 +145,13 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
                               padding: const EdgeInsets.fromLTRB(10, 4, 0, 4),
                               child: Row(
                                 children: [
-                                  Icon(
-                                    t.isSecure
-                                        ? Icons.lock_outline
-                                        : Icons.public,
-                                    size: 14,
-                                  ),
+                                  if (t.isNewTab)
+                                    Icon(
+                                      t.isPrivate ? Icons.privacy_tip_outlined : Icons.home_outlined,
+                                      size: 16,
+                                    )
+                                  else
+                                    SiteIcon(url: t.url, size: 16, radius: 3),
                                   const SizedBox(width: 6),
                                   Expanded(
                                     child: Text(

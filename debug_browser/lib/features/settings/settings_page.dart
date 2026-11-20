@@ -9,6 +9,9 @@ import '../../core/providers.dart';
 import '../../core/tabs_provider.dart';
 import '../../core/tool_providers.dart';
 import 'proxy_page.dart';
+import 'dart:convert';
+import '../../core/backup.dart';
+import '../../services/export_service.dart';
 import '../../core/home_stats.dart';
 import '../newtab/new_tab_page.dart';
 
@@ -41,6 +44,93 @@ class SettingsPage extends ConsumerWidget {
     if (result == null) return;
     final value = result.trim().isEmpty ? '' : normaliseUrlInput(result).toString();
     ref.read(browserSettingsProvider.notifier).update((x) => x.copyWith(customHomepage: value));
+  }
+
+  Future<void> _exportBackup(BuildContext context, WidgetRef ref) async {
+    var history = false;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, set) => AlertDialog(
+          title: const Text('Back up'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Saves bookmarks, settings, extensions, user scripts, mock rules, environments and '
+                'snippets to a file you can keep or move to another phone. Your proxy password is not included.'),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: history,
+              title: const Text('Include browsing history'),
+              onChanged: (v) => set(() => history = v ?? false),
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Save backup')),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    final done = await ExportService.shareJson(
+      buildBackup(ref.read, includeHistory: history),
+      fileName: 'debug_browser_backup',
+      text: 'Debug Browser backup',
+    );
+    if (!done && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Backup failed')));
+    }
+  }
+
+  Future<void> _importBackup(BuildContext context, WidgetRef ref) async {
+    void snack(String t) {
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
+    }
+
+    String? text;
+    try {
+      text = await pickBackupFile();
+    } on FormatException catch (e) {
+      snack(e.message);
+      return;
+    }
+    if (text == null) return;
+    Object? json;
+    try {
+      json = jsonDecode(text);
+    } on FormatException {
+      snack('This file is not a Debug Browser backup.');
+      return;
+    }
+    final (summary, error) = inspectBackup(json);
+    if (summary == null) {
+      snack(error!);
+      return;
+    }
+    if (!context.mounted) return;
+    final items = summary.describe();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Restore this backup?'),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (summary.createdAt != null)
+            Text('Made ${MaterialLocalizations.of(c).formatMediumDate(summary.createdAt!)}',
+                style: const TextStyle(color: Colors.grey)),
+          const SizedBox(height: 8),
+          for (final i in items) Text('• $i'),
+          const SizedBox(height: 12),
+          const Text('Missing items are added; nothing is deleted. Settings are replaced.',
+              style: TextStyle(fontSize: 13)),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Restore')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    restoreBackup(ref.read, json as Map);
+    snack(summary.proxy ? 'Restored. Reconnect your proxy in Proxy / VPN.' : 'Backup restored');
   }
 
   Future<void> _clearData(BuildContext context, WidgetRef ref) async {
@@ -150,6 +240,26 @@ class SettingsPage extends ConsumerWidget {
             onChanged: (v) => notifier.update((x) => x.copyWith(restoreTabs: v)),
           ),
           SwitchListTile(
+            secondary: const Icon(Icons.https_outlined),
+            title: const Text('HTTPS-only mode'),
+            subtitle: const Text('Open sites securely; ask before using an insecure connection'),
+            value: s.httpsOnly,
+            onChanged: (v) => notifier.update((x) => x.copyWith(httpsOnly: v)),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.unfold_less),
+            title: const Text('Hide toolbars while scrolling'),
+            subtitle: const Text('More room for the page; scroll up to bring them back'),
+            value: s.autoHideToolbars,
+            onChanged: (v) => notifier.update((x) => x.copyWith(autoHideToolbars: v)),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.refresh),
+            title: const Text('Pull to refresh'),
+            value: s.pullToRefresh,
+            onChanged: (v) => notifier.update((x) => x.copyWith(pullToRefresh: v)),
+          ),
+          SwitchListTile(
             secondary: const Icon(Icons.exit_to_app),
             title: const Text('Ask before exiting'),
             subtitle: const Text('Confirm when the back button would close the app'),
@@ -193,6 +303,19 @@ class SettingsPage extends ConsumerWidget {
               ref.read(homeTabProvider.notifier).select(AppTab.console);
             },
           ),
+          header('Backup'),
+          ListTile(
+            leading: const Icon(Icons.backup_outlined),
+            title: const Text('Back up'),
+            subtitle: const Text('Bookmarks, settings, extensions, scripts and more, in one file'),
+            onTap: () => _exportBackup(context, ref),
+          ),
+          ListTile(
+            leading: const Icon(Icons.settings_backup_restore),
+            title: const Text('Restore from backup'),
+            subtitle: const Text('Adds what is missing; nothing is deleted'),
+            onTap: () => _importBackup(context, ref),
+          ),
           header('About'),
           const AboutListTile(
             icon: Icon(Icons.info_outline),
@@ -201,7 +324,7 @@ class SettingsPage extends ConsumerWidget {
               child: SizedBox(width: 48, height: 48, child: CustomPaint(painter: LogoPainter(background: true, scale: 0.86))),
             ),
             applicationName: 'Debug Browser',
-            applicationVersion: '1.9.0',
+            applicationVersion: '2.0.0',
             applicationLegalese: '© InnovateX Technology',
             aboutBoxChildren: [
               SizedBox(height: 12),

@@ -15,6 +15,7 @@ import '../devtools/devtools_page.dart';
 import '../newtab/new_tab_page.dart';
 import '../../core/home_stats.dart';
 import '../../core/extensions.dart';
+import '../../core/favicons.dart';
 import '../extensions/site_sheet.dart';
 import 'browser_menu.dart';
 import 'downloads_page.dart';
@@ -40,20 +41,36 @@ class _HomePageState extends ConsumerState<HomePage> {
   late final ValueNotifier<String?> _notice;
   late final ValueNotifier<String?> _popups;
 
+  /// Toolbars hide while scrolling down a page (if enabled), never while
+  /// typing, finding, loading or on the New Tab / error pages.
+  bool _barsVisible(BrowserSettings settings, BrowserTab tab) =>
+      !settings.autoHideToolbars ||
+      _toolbars.value ||
+      _editing ||
+      _finding ||
+      tab.isNewTab ||
+      tab.error != null ||
+      tab.isLoading;
+
+  late final ValueNotifier<bool> _toolbars;
+  void _onToolbars() => setState(() {});
+
   void _onPopupBlocked() {
     final url = _popups.value;
     if (url == null || !mounted) return;
     final host = Uri.tryParse(url)?.host ?? url;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text('Pop-up blocked: $host'),
-        duration: const Duration(seconds: 3),
-        action: SnackBarAction(
-          label: 'Open anyway',
-          onPressed: () => ref.read(tabsProvider.notifier).newTab(url: url),
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Pop-up blocked: $host'),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'Open anyway',
+            onPressed: () => ref.read(tabsProvider.notifier).newTab(url: url),
+          ),
         ),
-      ));
+      );
     _popups.value = null;
   }
 
@@ -140,14 +157,21 @@ class _HomePageState extends ConsumerState<HomePage> {
     super.initState();
     HomeTabNotifier.openDevToolsRoute = _openDevTools;
     // Links opened from other apps (when this is the default browser).
-    SystemBrowser.listen((url) => ref.read(tabsProvider.notifier).newTab(url: url));
+    SystemBrowser.listen(
+      (url) => ref.read(tabsProvider.notifier).newTab(url: url),
+    );
     SystemBrowser.takeInitialUrl().then((url) {
-      if (url != null && mounted) ref.read(tabsProvider.notifier).newTab(url: url);
+      if (url != null && mounted) {
+        ref.read(tabsProvider.notifier).newTab(url: url);
+      }
     });
     _downloads = ref.read(tabsProvider.notifier).downloadStarted
       ..addListener(_onDownloadStarted);
     _notice = ref.read(tabsProvider.notifier).notice..addListener(_onNotice);
-    _popups = ref.read(tabsProvider.notifier).popupBlocked..addListener(_onPopupBlocked);
+    _popups = ref.read(tabsProvider.notifier).popupBlocked
+      ..addListener(_onPopupBlocked);
+    _toolbars = ref.read(tabsProvider.notifier).toolbarsVisible
+      ..addListener(_onToolbars);
     _addressFocus.addListener(() {
       final focused = _addressFocus.hasFocus;
       if (focused) {
@@ -168,6 +192,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     _downloads.removeListener(_onDownloadStarted);
     _notice.removeListener(_onNotice);
     _popups.removeListener(_onPopupBlocked);
+    _toolbars.removeListener(_onToolbars);
     _address.dispose();
     _addressFocus.dispose();
     _findText.dispose();
@@ -336,14 +361,18 @@ class _HomePageState extends ConsumerState<HomePage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(multiple
-                  ? 'You have ${tabsState.tabs.length} open tabs. They will be here when you come back.'
-                  : 'Your tab will be here when you come back.'),
+              Text(
+                multiple
+                    ? 'You have ${tabsState.tabs.length} open tabs. They will be here when you come back.'
+                    : 'Your tab will be here when you come back.',
+              ),
               if (private)
                 const Padding(
                   padding: EdgeInsets.only(top: 8),
-                  child: Text('Private tabs are closed and their data deleted when the app exits.',
-                      style: TextStyle(fontSize: 13)),
+                  child: Text(
+                    'Private tabs are closed and their data deleted when the app exits.',
+                    style: TextStyle(fontSize: 13),
+                  ),
                 ),
               const SizedBox(height: 8),
               CheckboxListTile(
@@ -359,16 +388,27 @@ class _HomePageState extends ConsumerState<HomePage> {
           actionsOverflowButtonSpacing: 4,
           actions: [
             if (multiple)
-              TextButton(onPressed: () => Navigator.pop(c, 'close_tab'), child: const Text('Close this tab')),
-            TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(c, 'exit'), child: const Text('Exit')),
+              TextButton(
+                onPressed: () => Navigator.pop(c, 'close_tab'),
+                child: const Text('Close this tab'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.pop(c),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(c, 'exit'),
+              child: const Text('Exit'),
+            ),
           ],
         ),
       ),
     );
     if (choice == null) return;
     if (dontAsk && choice == 'exit') {
-      ref.read(browserSettingsProvider.notifier).update((s) => s.copyWith(confirmExit: false));
+      ref
+          .read(browserSettingsProvider.notifier)
+          .update((s) => s.copyWith(confirmExit: false));
     }
     if (choice == 'close_tab') {
       tabs.closeTab(tabsState.activeId);
@@ -424,14 +464,18 @@ class _HomePageState extends ConsumerState<HomePage> {
             bottom: false,
             child: Column(
               children: [
-                _AddressBar(
-                  controller: _address,
-                  focus: _addressFocus,
-                  editing: _editing,
-                  tab: tab,
-                  onSubmit: _submit,
-                  onReload: () => ref.read(tabsProvider.notifier).reload(),
-                  onStop: () => ref.read(tabsProvider.notifier).stop(),
+                _Collapsible(
+                  visible: _barsVisible(settings, tab),
+                  alignment: Alignment.bottomCenter,
+                  child: _AddressBar(
+                    controller: _address,
+                    focus: _addressFocus,
+                    editing: _editing,
+                    tab: tab,
+                    onSubmit: _submit,
+                    onReload: () => ref.read(tabsProvider.notifier).reload(),
+                    onStop: () => ref.read(tabsProvider.notifier).stop(),
+                  ),
                 ),
                 Expanded(
                   child: Stack(
@@ -450,8 +494,12 @@ class _HomePageState extends ConsumerState<HomePage> {
                           child: _ErrorPage(
                             url: tab.url,
                             message: tab.error!,
+                            insecureFallback: tab.insecureFallback,
                             onRetry: () =>
                                 ref.read(tabsProvider.notifier).reload(),
+                            onContinueInsecure: () => ref
+                                .read(tabsProvider.notifier)
+                                .continueInsecure(),
                           ),
                         ),
                       if (_editing)
@@ -463,6 +511,10 @@ class _HomePageState extends ConsumerState<HomePage> {
                             onOpen: _openUrl,
                             listenable: _address,
                           ),
+                        ),
+                      if (settings.pullToRefresh && !tab.isNewTab)
+                        const Positioned.fill(
+                          child: IgnorePointer(child: _PullIndicator()),
                         ),
                       if (settings.showDebugBubble && !_editing)
                         const DebugBubble(),
@@ -479,10 +531,14 @@ class _HomePageState extends ConsumerState<HomePage> {
                     },
                   )
                 else if (!_editing)
-                  _BottomBar(
-                    tab: tab,
-                    tabCount: tabsState.tabs.length,
-                    onFind: startFind,
+                  _Collapsible(
+                    visible: _barsVisible(settings, tab),
+                    alignment: Alignment.topCenter,
+                    child: _BottomBar(
+                      tab: tab,
+                      tabCount: tabsState.tabs.length,
+                      onFind: startFind,
+                    ),
                   ),
               ],
             ),
@@ -521,8 +577,15 @@ class _ShieldButton extends ConsumerWidget {
       icon: Badge(
         isLabelVisible: on && n > 0,
         backgroundColor: Colors.green.shade700,
-        label: Text(n > 99 ? '99+' : '$n', style: const TextStyle(fontSize: 10)),
-        child: Icon(on ? Icons.shield : Icons.shield_outlined, size: 20, color: on ? Colors.green : null),
+        label: Text(
+          n > 99 ? '99+' : '$n',
+          style: const TextStyle(fontSize: 10),
+        ),
+        child: Icon(
+          on ? Icons.shield : Icons.shield_outlined,
+          size: 20,
+          color: on ? Colors.green : null,
+        ),
       ),
     );
   }
@@ -532,14 +595,22 @@ class _WebArea extends ConsumerWidget {
   final BrowserTab tab;
   final WebViewController controller;
   final VoidCallback onSearchTap;
-  const _WebArea({required this.tab, required this.controller, required this.onSearchTap});
+  const _WebArea({
+    required this.tab,
+    required this.controller,
+    required this.onSearchTap,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (tab.isNewTab) {
       return Screenshot(
         controller: ref.watch(screenshotControllerProvider),
-        child: NewTabPage(key: ValueKey('ntp-${tab.id}'), onSearchTap: onSearchTap, isPrivate: tab.isPrivate),
+        child: NewTabPage(
+          key: ValueKey('ntp-${tab.id}'),
+          onSearchTap: onSearchTap,
+          isPrivate: tab.isPrivate,
+        ),
       );
     }
     final viewport = ref.watch(viewportProvider);
@@ -911,7 +982,14 @@ class _Suggestions extends ConsumerWidget {
                 ),
               for (final (icon, title, url) in matches)
                 ListTile(
-                  leading: Icon(icon),
+                  leading: Badge(
+                    // Small kind marker (bookmark / history) on the site icon.
+                    backgroundColor: Colors.transparent,
+                    alignment: AlignmentDirectional.bottomEnd,
+                    offset: const Offset(4, 4),
+                    label: Icon(icon, size: 12),
+                    child: SiteIcon(url: url, size: 24),
+                  ),
                   title: Text(
                     title,
                     maxLines: 1,
@@ -1013,10 +1091,16 @@ class _ErrorPage extends StatelessWidget {
   final String url;
   final String message;
   final VoidCallback onRetry;
+
+  /// Set when HTTPS-only upgraded an http:// address and https failed.
+  final String? insecureFallback;
+  final VoidCallback onContinueInsecure;
   const _ErrorPage({
     required this.url,
     required this.message,
     required this.onRetry,
+    required this.insecureFallback,
+    required this.onContinueInsecure,
   });
 
   @override
@@ -1030,10 +1114,16 @@ class _ErrorPage extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.cloud_off, size: 64, color: Colors.grey),
+              Icon(
+                insecureFallback != null ? Icons.lock_open : Icons.cloud_off,
+                size: 64,
+                color: Colors.grey,
+              ),
               const SizedBox(height: 16),
               Text(
-                "This site can't be reached",
+                insecureFallback != null
+                    ? "This site doesn't support a secure connection"
+                    : "This site can't be reached",
                 style: Theme.of(context).textTheme.titleLarge,
                 textAlign: TextAlign.center,
               ),
@@ -1051,10 +1141,94 @@ class _ErrorPage extends StatelessWidget {
                 icon: const Icon(Icons.refresh),
                 label: const Text('Retry'),
               ),
+              if (insecureFallback != null) ...[
+                const SizedBox(height: 16),
+                const Text(
+                  'HTTPS-only mode tried the secure version. Anyone on your network could see or '
+                  'change what you send to the insecure version.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: onContinueInsecure,
+                  child: const Text('Continue to site (not secure)'),
+                ),
+              ],
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Slides a toolbar out of view and gives its space to the page.
+class _Collapsible extends StatelessWidget {
+  final bool visible;
+  final Alignment alignment;
+  final Widget child;
+  const _Collapsible({
+    required this.visible,
+    required this.alignment,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fast = MediaQuery.of(context).disableAnimations;
+    return ClipRect(
+      child: AnimatedAlign(
+        alignment: alignment,
+        heightFactor: visible ? 1 : 0,
+        duration: fast ? Duration.zero : const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        child: child,
+      ),
+    );
+  }
+}
+
+/// Pull-to-refresh spinner driven by the page's pull gesture.
+class _PullIndicator extends ConsumerWidget {
+  const _PullIndicator();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tabs = ref.read(tabsProvider.notifier);
+    return ValueListenableBuilder<double?>(
+      valueListenable: tabs.pullDistance,
+      builder: (context, d, _) {
+        if (d == null) return const SizedBox.shrink();
+        final p = (d / TabsNotifier.pullTrigger).clamp(0.0, 1.0);
+        final ready = p >= 1;
+        final scheme = Theme.of(context).colorScheme;
+        return Align(
+          alignment: Alignment.topCenter,
+          child: Padding(
+            padding: EdgeInsets.only(top: 8 + 48 * p),
+            child: Opacity(
+              opacity: (p * 1.5).clamp(0.0, 1.0),
+              child: Material(
+                elevation: 4,
+                shape: const CircleBorder(),
+                color: scheme.surface,
+                child: Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: Transform.rotate(
+                    angle: p * 3.14159 * 1.5,
+                    child: Icon(
+                      Icons.refresh,
+                      color: ready ? scheme.primary : scheme.onSurfaceVariant,
+                      size: 24,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

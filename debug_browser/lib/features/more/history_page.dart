@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../core/tabs_provider.dart';
+import '../../core/favicons.dart';
 import '../../core/tool_providers.dart';
 
 class HistoryPage extends ConsumerStatefulWidget {
@@ -165,10 +166,7 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
                             ),
                             onDismissed: (_) => ref.read(historyProvider.notifier).remove(e),
                             child: ListTile(
-                              leading: CircleAvatar(
-                                radius: 16,
-                                child: Text(_initial(e['url'] ?? ''), style: const TextStyle(fontSize: 14)),
-                              ),
+                              leading: SiteIcon(url: e['url'] ?? '', size: 28),
                               title: Text((e['title'] ?? '').isEmpty ? e['url']! : e['title']!,
                                   maxLines: 1, overflow: TextOverflow.ellipsis),
                               subtitle: Text(Uri.tryParse(e['url'] ?? '')?.host ?? '',

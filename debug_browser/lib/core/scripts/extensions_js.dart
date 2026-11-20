@@ -241,6 +241,80 @@ const String extensionsCoreJs = r'''
 
     if (!isTop) return;
 
+    // ------------------------------------------------- browser UI signals
+    // The page lives in a native view, so the app can't see its scrolling:
+    // report scroll direction (auto-hiding toolbars) and pull-down-at-top
+    // gestures (pull to refresh). Passive listeners: never block scrolling.
+    (function () {
+        var lastY = 0, lastDir = '', acc = 0, frame = false;
+        function yOf(t) {
+            if (!t || t === document || t === document.documentElement || t === document.body) return window.scrollY || 0;
+            return t.scrollTop || 0;
+        }
+        document.addEventListener('scroll', function (e) {
+            if (frame) return;
+            frame = true;
+            requestAnimationFrame(function () {
+                frame = false;
+                var y = yOf(e.target);
+                var d = y - lastY;
+                lastY = y;
+                acc = (d > 0) === (acc > 0) ? acc + d : d;
+                var dir = y < 24 ? 'top' : acc > 40 ? 'down' : acc < -40 ? 'up' : lastDir;
+                if (dir !== lastDir) { lastDir = dir; send('ui', { kind: 'scroll', dir: dir }); }
+            });
+        }, { capture: true, passive: true });
+
+        // Pull to refresh: only when the page (and the touched scroller) is at the top.
+        var startY = null, pulling = false, lastSent = 0;
+        function scrolledAncestor(el) {
+            for (var n = el; n && n.nodeType === 1; n = n.parentElement) {
+                if (n.scrollTop > 0) return true;
+            }
+            return false;
+        }
+        window.addEventListener('touchstart', function (e) {
+            startY = (e.touches.length === 1 && (window.scrollY || 0) <= 0 && !scrolledAncestor(e.target)) ? e.touches[0].clientY : null;
+            pulling = false;
+        }, { passive: true });
+        window.addEventListener('touchmove', function (e) {
+            if (startY === null) return;
+            var d = e.touches[0].clientY - startY;
+            if ((window.scrollY || 0) > 0 || d < 0) { if (pulling) send('ui', { kind: 'pull', state: 'cancel' }); startY = null; pulling = false; return; }
+            if (d < 12) return;
+            pulling = true;
+            var now = Date.now();
+            if (now - lastSent > 32) { lastSent = now; send('ui', { kind: 'pull', state: 'move', d: Math.round(d) }); }
+        }, { passive: true });
+        window.addEventListener('touchend', function (e) {
+            if (!pulling) { startY = null; return; }
+            var d = (e.changedTouches[0] ? e.changedTouches[0].clientY : 0) - startY;
+            send('ui', { kind: 'pull', state: 'release', d: Math.round(d) });
+            startY = null; pulling = false;
+        }, { passive: true });
+        window.addEventListener('touchcancel', function () {
+            if (pulling) send('ui', { kind: 'pull', state: 'cancel' });
+            startY = null; pulling = false;
+        }, { passive: true });
+    })();
+
+    // Site icon: the page's best declared icon, else /favicon.ico.
+    window.addEventListener('load', function () {
+        try {
+            var best = null, bestSize = -1;
+            document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"], link[rel="apple-touch-icon-precomposed"]').forEach(function (l) {
+                var href = l.href;
+                if (!href || !/^https?:/.test(href)) return;
+                var sizes = (l.getAttribute('sizes') || '').split(/\s+/).map(function (s) { return parseInt(s, 10) || 0; });
+                var size = Math.max.apply(null, sizes.concat([/apple-touch/.test(l.rel) ? 180 : 16]));
+                // Prefer ~64-192px icons: crisp without being huge.
+                var score = size > 256 ? 256 - (size - 256) / 4 : size;
+                if (score > bestSize) { bestSize = score; best = href; }
+            });
+            send('favicon', { href: best || (location.origin + '/favicon.ico') });
+        } catch (e) { }
+    });
+
     // ---------------------------------------------------------- dark mode
     if (CFG.dark && siteSetting('dark', true)) {
         var dark = addStyle(

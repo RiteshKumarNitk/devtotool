@@ -25,6 +25,8 @@ class MainActivity : FlutterActivity() {
     private val channelName = "com.innovatextechnology.debugbrowser/downloads"
     private val linksChannelName = "com.innovatextechnology.debugbrowser/links"
     private val roleRequestCode = 4711
+    private val pickFileRequestCode = 4712
+    private var pendingPickResult: MethodChannel.Result? = null
 
     private var linksChannel: MethodChannel? = null
     private var pendingRoleResult: MethodChannel.Result? = null
@@ -91,6 +93,26 @@ class MainActivity : FlutterActivity() {
             pendingRoleResult?.success(isDefaultBrowser())
             pendingRoleResult = null
         }
+        if (requestCode == pickFileRequestCode) {
+            val result = pendingPickResult ?: return
+            pendingPickResult = null
+            val uri = data?.data
+            if (resultCode != RESULT_OK || uri == null) {
+                result.success(null)
+                return
+            }
+            try {
+                // Backups are small JSON files; refuse anything huge.
+                val text = contentResolver.openInputStream(uri)!!.use { input ->
+                    val bytes = input.readBytes()
+                    if (bytes.size > 20 * 1024 * 1024) throw IllegalStateException("File is too large")
+                    String(bytes, Charsets.UTF_8)
+                }
+                result.success(text)
+            } catch (e: Exception) {
+                result.error("PICK", e.message, null)
+            }
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -104,6 +126,17 @@ class MainActivity : FlutterActivity() {
                     }
                     "isDefaultBrowser" -> result.success(isDefaultBrowser())
                     "requestDefaultBrowser" -> requestDefaultBrowser(result)
+                    "pickTextFile" -> {
+                        pendingPickResult?.success(null)
+                        pendingPickResult = result
+                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "*/*"
+                            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/plain", "application/octet-stream"))
+                        }
+                        @Suppress("DEPRECATION")
+                        startActivityForResult(intent, pickFileRequestCode)
+                    }
                     else -> result.notImplemented()
                 }
             }

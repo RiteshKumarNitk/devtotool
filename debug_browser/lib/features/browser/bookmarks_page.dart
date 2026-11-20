@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
+import '../../core/favicons.dart';
 import '../../core/tabs_provider.dart';
 import '../../core/tool_providers.dart';
 
@@ -26,7 +27,7 @@ class BookmarksPage extends ConsumerWidget {
                 final b = bookmarks[i];
                 final url = b['url'] ?? '';
                 return ListTile(
-                  leading: const Icon(Icons.star, color: Colors.amber),
+                  leading: SiteIcon(url: url, size: 28),
                   title: Text(b['title'] ?? url, maxLines: 1, overflow: TextOverflow.ellipsis),
                   subtitle: Text(url, maxLines: 1, overflow: TextOverflow.ellipsis),
                   onTap: () {

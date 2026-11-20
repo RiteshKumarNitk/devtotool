@@ -194,6 +194,16 @@ class HistoryNotifier extends Notifier<List<Map<String, String>>> {
     _box()?.delete(_key);
   }
 
+  /// Merges visits from a backup (deduplicated, oldest first, capped).
+  int importEntries(List<Map<String, String>> entries) {
+    final key = {for (final e in state) '${e['url']}|${e['time']}'};
+    final added = entries.where((e) => (e['url'] ?? '').isNotEmpty && key.add('${e['url']}|${e['time']}')).toList();
+    final merged = [...state, ...added]..sort((a, b) => (a['time'] ?? '').compareTo(b['time'] ?? ''));
+    state = merged.length > maxHistoryEntries ? merged.sublist(merged.length - maxHistoryEntries) : merged;
+    _box()?.put(_key, state);
+    return added.length;
+  }
+
   /// Deletes one visit (matched by URL and time).
   void remove(Map<String, String> entry) {
     state = state.where((e) => !(e['url'] == entry['url'] && e['time'] == entry['time'])).toList();

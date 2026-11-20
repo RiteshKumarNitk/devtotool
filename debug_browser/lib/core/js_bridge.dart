@@ -121,6 +121,10 @@ BridgeMessage? parseBridgeMessage(String raw) {
     case 'a11y':
     case 'find_result':
       return PageDataMessage(type as String, map);
+    case 'ui':
+      final kind = map['kind'];
+      if (kind != 'scroll' && kind != 'pull') return null;
+      return UiEventMessage(kind as String, map);
     case 'blocked':
       final n = map['n'];
       final domains = map['domains'];
@@ -138,12 +142,21 @@ BridgeMessage? parseBridgeMessage(String raw) {
     case 'link_menu':
     case 'download_link':
     case 'popup_blocked':
+    case 'favicon':
       final href = map['href'];
       // Only web links may open tabs from page content.
       if (href is! String || !(href.startsWith('http://') || href.startsWith('https://'))) return null;
       return BrowserActionMessage(type as String, map);
   }
   return null;
+}
+
+/// Browser-UI signals from the page: 'scroll' {dir: down|up|top} and
+/// 'pull' {state: move|release|cancel, d: pixels}.
+class UiEventMessage extends BridgeMessage {
+  final String kind;
+  final Map<String, dynamic> data;
+  const UiEventMessage(this.kind, this.data);
 }
 
 /// The extension blocker stopped [count] requests (delta since last report).

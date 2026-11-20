@@ -24,6 +24,26 @@ enum SearchEngine {
 /// Internal address of the built-in New Tab page.
 const newTabUrl = 'app://newtab';
 
+/// Whether an http:// URL should be upgraded to https:// (HTTPS-only mode).
+/// Local and private-network addresses never are.
+bool shouldUpgradeToHttps(Uri uri, {Set<String> allowedHttpHosts = const {}}) {
+  if (uri.scheme != 'http') return false;
+  final h = uri.host.toLowerCase();
+  if (h.isEmpty || allowedHttpHosts.contains(h)) return false;
+  if (h == 'localhost' || h.endsWith('.localhost') || !h.contains('.')) return false;
+  if (h.endsWith('.local') || h.endsWith('.lan') || h.endsWith('.internal') || h.endsWith('.home.arpa')) return false;
+  final ip = RegExp(r'^(\d+)\.(\d+)\.(\d+)\.(\d+)$').firstMatch(h);
+  if (ip != null) {
+    final a = int.parse(ip.group(1)!), b = int.parse(ip.group(2)!);
+    // Private, loopback and link-local ranges (routers, dev servers).
+    if (a == 10 || a == 127 || (a == 192 && b == 168) || (a == 172 && b >= 16 && b <= 31) || (a == 169 && b == 254)) {
+      return false;
+    }
+  }
+  if (h.startsWith('[')) return false; // IPv6 literal: leave alone
+  return true;
+}
+
 /// Background themes for the New Tab page.
 enum NewTabTheme {
   aurora('Aurora'),
@@ -58,6 +78,13 @@ class BrowserSettings {
   final bool showStats;
   final bool showTopSites;
 
+  /// Hide the address/bottom bars while scrolling down.
+  final bool autoHideToolbars;
+  final bool pullToRefresh;
+
+  /// Load http:// sites over https://, with a fallback page.
+  final bool httpsOnly;
+
   const BrowserSettings({
     this.engine = SearchEngine.google,
     this.customHomepage = '',
@@ -69,6 +96,9 @@ class BrowserSettings {
     this.newTabTheme = NewTabTheme.aurora,
     this.showStats = true,
     this.showTopSites = true,
+    this.autoHideToolbars = true,
+    this.pullToRefresh = true,
+    this.httpsOnly = true,
   });
 
   String get homepage {
@@ -87,6 +117,9 @@ class BrowserSettings {
     NewTabTheme? newTabTheme,
     bool? showStats,
     bool? showTopSites,
+    bool? autoHideToolbars,
+    bool? pullToRefresh,
+    bool? httpsOnly,
   }) =>
       BrowserSettings(
         engine: engine ?? this.engine,
@@ -99,6 +132,9 @@ class BrowserSettings {
         newTabTheme: newTabTheme ?? this.newTabTheme,
         showStats: showStats ?? this.showStats,
         showTopSites: showTopSites ?? this.showTopSites,
+        autoHideToolbars: autoHideToolbars ?? this.autoHideToolbars,
+        pullToRefresh: pullToRefresh ?? this.pullToRefresh,
+        httpsOnly: httpsOnly ?? this.httpsOnly,
       );
 
   Map<String, dynamic> toJson() => {
@@ -111,6 +147,9 @@ class BrowserSettings {
         'newTabTheme': newTabTheme.name,
         'showStats': showStats,
         'showTopSites': showTopSites,
+        'autoHideToolbars': autoHideToolbars,
+        'pullToRefresh': pullToRefresh,
+        'httpsOnly': httpsOnly,
         // desktopMode is per-session on purpose (like Chrome's "Desktop site").
       };
 
@@ -126,6 +165,9 @@ class BrowserSettings {
       newTabTheme: NewTabTheme.byName(j['newTabTheme']),
       showStats: j['showStats'] != false,
       showTopSites: j['showTopSites'] != false,
+      autoHideToolbars: j['autoHideToolbars'] != false,
+      pullToRefresh: j['pullToRefresh'] != false,
+      httpsOnly: j['httpsOnly'] != false,
     );
   }
 }

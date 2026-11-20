@@ -12,6 +12,7 @@ import 'browser_native.dart';
 import 'browser_settings.dart';
 import 'downloads.dart';
 import 'extensions.dart';
+import 'favicons.dart';
 import 'home_stats.dart';
 import 'js_bridge.dart';
 import 'providers.dart';
@@ -51,6 +52,9 @@ class BrowserTab {
   /// The tab came from the New Tab page: back at the start returns to it.
   final bool ntpBehind;
 
+  /// HTTPS-only: the http:// address whose secure version failed to load.
+  final String? insecureFallback;
+
   const BrowserTab({
     required this.id,
     required this.url,
@@ -67,6 +71,7 @@ class BrowserTab {
     this.lastWebUrl,
     this.lastWebTitle,
     this.ntpBehind = false,
+    this.insecureFallback,
   });
 
   bool get isNewTab => url == newTabUrl;
@@ -94,6 +99,7 @@ class BrowserTab {
     String? Function()? lastWebUrl,
     String? Function()? lastWebTitle,
     bool? ntpBehind,
+    String? Function()? insecureFallback,
   }) =>
       BrowserTab(
         id: id,
@@ -111,6 +117,7 @@ class BrowserTab {
         lastWebUrl: lastWebUrl != null ? lastWebUrl() : this.lastWebUrl,
         lastWebTitle: lastWebTitle != null ? lastWebTitle() : this.lastWebTitle,
         ntpBehind: ntpBehind ?? this.ntpBehind,
+        insecureFallback: insecureFallback != null ? insecureFallback() : this.insecureFallback,
       );
 }
 
@@ -196,6 +203,22 @@ class TabsNotifier extends Notifier<TabsState> {
 
   /// URL of the last pop-up the blocker stopped (UI offers "Open anyway").
   final popupBlocked = ValueNotifier<String?>(null);
+
+  /// Auto-hiding toolbars: false while the user scrolls down a page.
+  final toolbarsVisible = ValueNotifier<bool>(true);
+
+  /// Pull to refresh: current pull distance in px, or null when not pulling.
+  final pullDistance = ValueNotifier<double?>(null);
+  static const double pullTrigger = 110;
+
+  /// HTTPS-only: per tab, the original http:// URL of an upgrade in flight.
+  final Map<String, String> _upgradedFrom = {};
+
+  /// Hosts allowed over http this session (no https, or the user chose so).
+  final Set<String> _httpAllowed = {};
+
+  /// Host -> when we last upgraded it (detects https->http redirect loops).
+  final Map<String, DateTime> _recentUpgrades = {};
 
   /// Private tabs whose WebView isn't in the private profile yet: never load.
   final Set<String> _awaitingProfile = {};
@@ -329,6 +352,8 @@ class TabsNotifier extends Notifier<TabsState> {
   }
 
   void _onActivated(String id) {
+    toolbarsVisible.value = true;
+    pullDistance.value = null;
     // Dev tools follow the active tab.
     ref.read(webViewControllerProvider.notifier).setController(_controllers[id]!);
     ref.read(pageDataProvider.notifier).clear();
@@ -368,11 +393,19 @@ class TabsNotifier extends Notifier<TabsState> {
       showNewTabPage(tabId: id);
       return;
     }
+    if (_settings.httpsOnly && shouldUpgradeToHttps(uri, allowedHttpHosts: _httpAllowed)) {
+      _upgradedFrom[id] = uri.toString();
+      _recentUpgrades[uri.host.toLowerCase()] = DateTime.now();
+      uri = uri.replace(scheme: 'https', port: uri.hasPort && uri.port != 80 ? uri.port : null);
+    } else {
+      _upgradedFrom.remove(id);
+    }
     final fromNtp = _tab(id)?.isNewTab ?? false;
     _patch(id, (t) => t.copyWith(
           url: uri.toString(),
           loaded: true,
           error: () => null,
+          insecureFallback: () => null,
           // Back from the first page returns to the New Tab page, unless
           // the WebView already has history of its own.
           ntpBehind: fromNtp ? t.lastWebUrl == null : t.ntpBehind,
@@ -383,6 +416,16 @@ class TabsNotifier extends Notifier<TabsState> {
   }
 
   void goHome() => loadUri(normaliseUrlInput(_settings.homepage));
+
+  /// HTTPS-only fallback: the user chose to open the site without https.
+  void continueInsecure() {
+    final tab = state.active;
+    final url = tab.insecureFallback;
+    if (url == null) return;
+    final uri = Uri.parse(url);
+    _httpAllowed.add(uri.host.toLowerCase());
+    loadUri(uri, tabId: tab.id);
+  }
 
   /// Shows the built-in New Tab page in a tab, keeping its WebView page.
   void showNewTabPage({String? tabId}) {
@@ -518,6 +561,7 @@ class TabsNotifier extends Notifier<TabsState> {
           _applyTextZoom(id, url);
           if (_tab(id)?.isNewTab == true) return;
           _patch(id, (t) => t.copyWith(url: url, isLoading: true, progress: 0.05, error: () => null));
+          if (id == state.activeId) toolbarsVisible.value = true;
           if (id == state.activeId) {
             ref.read(pageDataProvider.notifier).clear();
             ref.read(domTreeProvider.notifier).setTree({});
@@ -529,7 +573,12 @@ class TabsNotifier extends Notifier<TabsState> {
           if (e.isForMainFrame != true) return;
           // -999/cancelled navigations aren't real errors.
           if (e.errorType == WebResourceErrorType.unknown && e.description.toLowerCase().contains('cancel')) return;
-          _patch(id, (t) => t.copyWith(isLoading: false, error: () => e.description));
+          final httpUrl = _upgradedFrom.remove(id);
+          _patch(id, (t) => t.copyWith(
+                isLoading: false,
+                error: () => e.description,
+                insecureFallback: () => httpUrl,
+              ));
           if (id == state.activeId) {
             ref.read(consoleLogsProvider.notifier).addLog(ConsoleLog(
                   level: 'error',
@@ -631,6 +680,18 @@ class TabsNotifier extends Notifier<TabsState> {
     if (uri == null) return NavigationDecision.navigate;
     if (_webSchemes.contains(uri.scheme)) {
       if (!req.isMainFrame) return NavigationDecision.navigate;
+      if (_settings.httpsOnly && shouldUpgradeToHttps(uri, allowedHttpHosts: _httpAllowed)) {
+        final host = uri.host.toLowerCase();
+        final last = _recentUpgrades[host];
+        if (last != null && DateTime.now().difference(last) < const Duration(seconds: 8)) {
+          // https redirected straight back to http: the site has no https.
+          _httpAllowed.add(host);
+          _upgradedFrom.remove(id);
+          return NavigationDecision.navigate;
+        }
+        loadUri(uri, tabId: id); // re-enters as https
+        return NavigationDecision.prevent;
+      }
       if (_forceNavigate.remove(req.url)) return NavigationDecision.navigate;
       final pending = _pendingNav.putIfAbsent(id, () => {});
       // Page-initiated jumps to known ad / pop-under networks (not addresses
@@ -771,6 +832,7 @@ class TabsNotifier extends Notifier<TabsState> {
   }
 
   Future<void> _onPageFinished(String id, String url) async {
+    if (url.startsWith('https://')) _upgradedFrom.remove(id);
     final c = _controllers[id];
     if (c == null) return;
     try {
@@ -813,6 +875,31 @@ class TabsNotifier extends Notifier<TabsState> {
 
   void _onBridgeMessage(String id, String raw) {
     final msg = parseBridgeMessage(raw);
+    if (msg is UiEventMessage) {
+      if (id != state.activeId) return;
+      if (msg.kind == 'scroll') {
+        final dir = msg.data['dir'];
+        if (dir == 'down') toolbarsVisible.value = false;
+        if (dir == 'up' || dir == 'top') toolbarsVisible.value = true;
+      } else {
+        final st = msg.data['state'];
+        final d = (msg.data['d'] as num?)?.toDouble() ?? 0;
+        if (st == 'move') {
+          pullDistance.value = d;
+        } else {
+          pullDistance.value = null;
+          if (st == 'release' && d >= pullTrigger && _settings.pullToRefresh) reload();
+        }
+      }
+      return;
+    }
+    if (msg is BrowserActionMessage && msg.kind == 'favicon') {
+      final tab = _tab(id);
+      if (tab != null && !tab.isPrivate && !tab.isNewTab) {
+        ref.read(faviconsProvider.notifier).learn(tab.url, msg.href);
+      }
+      return;
+    }
     if (msg is BlockedMessage) {
       _patch(id, (t) {
         final domains = Map<String, int>.from(t.blockedDomains);

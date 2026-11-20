@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../branding/logo_painter.dart';
 import '../../core/browser_settings.dart';
+import '../../core/favicons.dart';
 import '../../core/home_stats.dart';
 import '../../core/providers.dart';
 import '../../core/tabs_provider.dart';
@@ -298,17 +299,7 @@ class _SiteTile extends StatelessWidget {
               radius: 16,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(10),
-                child: SizedBox(
-                  width: 36,
-                  height: 36,
-                  child: Image.network(
-                    'https://${site.host}/favicon.ico',
-                    fit: BoxFit.contain,
-                    filterQuality: FilterQuality.medium,
-                    errorBuilder: (_, __, ___) => fallback,
-                    frameBuilder: (context, child, frame, sync) => frame == null && !sync ? fallback : child,
-                  ),
-                ),
+                child: SiteIcon(url: site.url, size: 36, radius: 10),
               ),
             ),
             const SizedBox(height: 6),
