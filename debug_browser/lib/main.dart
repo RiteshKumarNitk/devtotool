@@ -45,11 +45,14 @@ class DebugBrowserApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeProvider);
+    final seed = Color(ref.watch(accentColorProvider));
 
     return MaterialApp(
       title: 'Debug Browser',
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
+      theme: AppTheme.build(Brightness.light, seed: seed),
+      darkTheme: AppTheme.build(Brightness.dark, seed: seed),
+      themeAnimationDuration: const Duration(milliseconds: 350),
+      themeAnimationCurve: Curves.easeOutCubic,
       themeMode: themeMode,
       navigatorKey: appNavigatorKey,
       home: const SplashPage(next: FirstRunGate(child: HomePage())),

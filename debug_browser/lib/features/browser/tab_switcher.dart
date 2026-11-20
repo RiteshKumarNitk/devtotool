@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/backup.dart' show ProviderReader;
 import '../../core/tabs_provider.dart';
 import '../../core/favicons.dart';
+import 'tab_actions.dart';
 
 /// Grid of open tabs with Chrome-style "Tabs" / "Private" sections.
 class TabSwitcherPage extends ConsumerStatefulWidget {
@@ -26,6 +29,13 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
     Color(0xFFE52592),
     Color(0xFF5F6368),
   ];
+
+  /// App-wide reader that stays valid after this page closes (Undo).
+  ProviderReader get _read =>
+      ProviderScope.containerOf(context, listen: false).read;
+
+  void _close(String id) => closeTabWithUndo(context, _read, id);
+
   static Color groupColor(String g) =>
       _groupColors[g.hashCode.abs() % _groupColors.length];
 
@@ -83,7 +93,7 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
               title: const Text('Close tab'),
               onTap: () {
                 Navigator.pop(c);
-                tabs.closeTab(t.id);
+                _close(t.id);
               },
             ),
           ],
@@ -246,11 +256,24 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
             ),
           ],
           selected: {_private},
-          onSelectionChanged: (s) => setState(() => _private = s.first),
+          onSelectionChanged: (s) {
+            HapticFeedback.selectionClick();
+            setState(() => _private = s.first);
+          },
         ),
         actions: [
           PopupMenuButton<String>(
             onSelected: (v) async {
+              if (v == 'recent') {
+                await showRecentlyClosed(
+                  context,
+                  _read,
+                  onReopened: () {
+                    if (context.mounted) Navigator.pop(context);
+                  },
+                );
+                return;
+              }
               if (v == 'close_all') {
                 final ok = await showDialog<bool>(
                   context: context,
@@ -281,13 +304,29 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
               }
             },
             itemBuilder: (_) => const [
-              PopupMenuItem(value: 'close_all', child: Text('Close all')),
+              PopupMenuItem(
+                value: 'recent',
+                child: ListTile(
+                  leading: Icon(Icons.restore_page_outlined),
+                  title: Text('Recently closed'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'close_all',
+                child: ListTile(
+                  leading: Icon(Icons.close_fullscreen),
+                  title: Text('Close all'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
             ],
           ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
+          HapticFeedback.lightImpact();
           final id = tabs.newTab(private: _private);
           // A new tab opened while viewing a group joins that group.
           if (_groupFilter != null) tabs.setGroup(id, _groupFilter);
@@ -300,13 +339,26 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
           ? Center(
               child: Padding(
                 padding: const EdgeInsets.all(32),
-                child: Text(
-                  _private
-                      ? "Private tabs don't save history, and their cookies and site data "
-                            'are deleted when you close the last private tab. Downloads and '
-                            'bookmarks are kept.'
-                      : 'No open tabs',
-                  textAlign: TextAlign.center,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _private
+                          ? Icons.privacy_tip_outlined
+                          : Icons.tab_unselected,
+                      size: 56,
+                      color: scheme.outline,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      _private
+                          ? "Private tabs don't save history, and their cookies and site data "
+                                'are deleted when you close the last private tab. Downloads and '
+                                'bookmarks are kept.'
+                          : 'No open tabs',
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
               ),
             )
@@ -325,136 +377,157 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
                 // Locked private tabs don't reveal what's open.
                 final masked = t.isPrivate && ref.watch(privateLockProvider);
                 final host = masked ? '' : (Uri.tryParse(t.url)?.host ?? '');
-                return Dismissible(
-                  key: ValueKey(t.id),
-                  onDismissed: (_) => tabs.closeTab(t.id),
-                  child: Material(
-                    color: scheme.surfaceContainerHigh,
+                final dismissBg = Container(
+                  decoration: BoxDecoration(
+                    color: scheme.errorContainer,
                     borderRadius: BorderRadius.circular(14),
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: () {
-                        tabs.activate(t.id);
-                        Navigator.pop(context);
-                      },
-                      onLongPress: () => _tabMenu(t),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: active
-                                ? scheme.primary
-                                : (t.group != null
-                                      ? groupColor(
-                                          t.group!,
-                                        ).withValues(alpha: 0.8)
-                                      : Colors.transparent),
-                            width: 2.5,
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.delete_outline,
+                    color: scheme.onErrorContainer,
+                    size: 32,
+                  ),
+                );
+                return _Entrance(
+                  index: i,
+                  child: Dismissible(
+                    key: ValueKey(t.id),
+                    background: dismissBg,
+                    onDismissed: (_) => _close(t.id),
+                    child: Material(
+                      color: scheme.surfaceContainerHigh,
+                      borderRadius: BorderRadius.circular(14),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () {
+                          tabs.activate(t.id);
+                          Navigator.pop(context);
+                        },
+                        onLongPress: () => _tabMenu(t),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: active
+                                  ? scheme.primary
+                                  : (t.group != null
+                                        ? groupColor(
+                                            t.group!,
+                                          ).withValues(alpha: 0.8)
+                                        : Colors.transparent),
+                              width: 2.5,
+                            ),
                           ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(10, 4, 0, 4),
-                              child: Row(
-                                children: [
-                                  if (t.isNewTab || masked)
-                                    Icon(
-                                      t.isPrivate
-                                          ? Icons.privacy_tip_outlined
-                                          : Icons.home_outlined,
-                                      size: 16,
-                                    )
-                                  else
-                                    SiteIcon(url: t.url, size: 16, radius: 3),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      masked
-                                          ? 'Private tab (locked)'
-                                          : t.displayTitle,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(10, 4, 0, 4),
+                                child: Row(
+                                  children: [
+                                    if (t.isNewTab || masked)
+                                      Icon(
+                                        t.isPrivate
+                                            ? Icons.privacy_tip_outlined
+                                            : Icons.home_outlined,
+                                        size: 16,
+                                      )
+                                    else
+                                      SiteIcon(url: t.url, size: 16, radius: 3),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        masked
+                                            ? 'Private tab (locked)'
+                                            : t.displayTitle,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Close tab',
-                                    visualDensity: VisualDensity.compact,
-                                    icon: const Icon(Icons.close, size: 18),
-                                    onPressed: () => tabs.closeTab(t.id),
-                                  ),
-                                ],
+                                    IconButton(
+                                      tooltip: 'Close tab',
+                                      visualDensity: VisualDensity.compact,
+                                      icon: const Icon(Icons.close, size: 18),
+                                      onPressed: () => _close(t.id),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                            Expanded(
-                              child: thumbs[t.id] != null
-                                  ? Image.memory(
-                                      thumbs[t.id]!,
-                                      fit: BoxFit.cover,
-                                      alignment: Alignment.topCenter,
-                                      gaplessPlayback: true,
-                                      filterQuality: FilterQuality.medium,
-                                    )
-                                  : Container(
-                                      color: scheme.surface,
-                                      alignment: Alignment.center,
-                                      padding: const EdgeInsets.all(12),
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          CircleAvatar(
-                                            radius: 22,
-                                            backgroundColor:
-                                                scheme.primaryContainer,
-                                            child: Text(
-                                              host
-                                                      .replaceFirst('www.', '')
-                                                      .isEmpty
-                                                  ? '?'
-                                                  : host
+                              Expanded(
+                                child: thumbs[t.id] != null
+                                    ? Image.memory(
+                                        thumbs[t.id]!,
+                                        fit: BoxFit.cover,
+                                        alignment: Alignment.topCenter,
+                                        gaplessPlayback: true,
+                                        filterQuality: FilterQuality.medium,
+                                      )
+                                    : Container(
+                                        color: scheme.surface,
+                                        alignment: Alignment.center,
+                                        padding: const EdgeInsets.all(12),
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            CircleAvatar(
+                                              radius: 22,
+                                              backgroundColor:
+                                                  scheme.primaryContainer,
+                                              child: Text(
+                                                host
                                                         .replaceFirst(
                                                           'www.',
                                                           '',
-                                                        )[0]
-                                                        .toUpperCase(),
-                                              style: TextStyle(
-                                                fontSize: 20,
-                                                color:
-                                                    scheme.onPrimaryContainer,
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(height: 10),
-                                          Text(
-                                            host,
-                                            maxLines: 2,
-                                            textAlign: TextAlign.center,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: scheme.onSurfaceVariant,
-                                            ),
-                                          ),
-                                          if (!t.loaded)
-                                            const Padding(
-                                              padding: EdgeInsets.only(top: 6),
-                                              child: Text(
-                                                'Not loaded',
+                                                        )
+                                                        .isEmpty
+                                                    ? '?'
+                                                    : host
+                                                          .replaceFirst(
+                                                            'www.',
+                                                            '',
+                                                          )[0]
+                                                          .toUpperCase(),
                                                 style: TextStyle(
-                                                  fontSize: 11,
-                                                  color: Colors.grey,
+                                                  fontSize: 20,
+                                                  color:
+                                                      scheme.onPrimaryContainer,
                                                 ),
                                               ),
                                             ),
-                                        ],
+                                            const SizedBox(height: 10),
+                                            Text(
+                                              host,
+                                              maxLines: 2,
+                                              textAlign: TextAlign.center,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: scheme.onSurfaceVariant,
+                                              ),
+                                            ),
+                                            if (!t.loaded)
+                                              const Padding(
+                                                padding: EdgeInsets.only(
+                                                  top: 6,
+                                                ),
+                                                child: Text(
+                                                  'Not loaded',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: Colors.grey,
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
                                       ),
-                                    ),
-                            ),
-                          ],
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -462,6 +535,36 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
                 );
               },
             ),
+    );
+  }
+}
+
+/// Cards fade and rise in one after another when the switcher opens.
+class _Entrance extends StatelessWidget {
+  final int index;
+  final Widget child;
+  const _Entrance({required this.index, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.of(context).disableAnimations) return child;
+    final ms = 260 + (index.clamp(0, 8) * 45);
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: Duration(milliseconds: ms),
+      curve: Interval(
+        (index.clamp(0, 8) * 45) / ms,
+        1,
+        curve: Curves.easeOutCubic,
+      ),
+      builder: (context, v, child) => Opacity(
+        opacity: v,
+        child: Transform.translate(
+          offset: Offset(0, 24 * (1 - v)),
+          child: Transform.scale(scale: 0.94 + 0.06 * v, child: child),
+        ),
+      ),
+      child: child,
     );
   }
 }

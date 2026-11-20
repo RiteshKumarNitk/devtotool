@@ -270,20 +270,9 @@ class _SiteTile extends StatelessWidget {
   final VoidCallback onLongPress;
   const _SiteTile({required this.site, required this.onTap, required this.onLongPress});
 
-  static const _tileColors = [
-    Color(0xFF5C6BC0), Color(0xFF26A69A), Color(0xFFEF5350), Color(0xFFAB47BC),
-    Color(0xFFFFA726), Color(0xFF42A5F5), Color(0xFF66BB6A), Color(0xFF8D6E63),
-  ];
 
   @override
   Widget build(BuildContext context) {
-    final letter = site.host.isEmpty ? '?' : site.host[0].toUpperCase();
-    final color = _tileColors[site.host.hashCode.abs() % _tileColors.length];
-    final fallback = Container(
-      alignment: Alignment.center,
-      color: color,
-      child: Text(letter, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
-    );
     return Semantics(
       button: true,
       label: site.title,

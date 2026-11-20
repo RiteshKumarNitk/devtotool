@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data' show BytesBuilder;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -187,7 +188,7 @@ Future<Uint8List?> captureFullPage(ProviderReader read, {int maxScreens = 12}) a
     final picture = recorder.endRecording();
     final out = await picture.toImage(first.width, totalH);
     picture.dispose();
-    return _png(out);
+    return await _png(out);
   } finally {
     for (final (img, _) in shots) {
       img.dispose();

@@ -185,10 +185,6 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
     );
   }
 
-  static String _initial(String url) {
-    final host = (Uri.tryParse(url)?.host ?? '').replaceFirst('www.', '');
-    return host.isEmpty ? '?' : host[0].toUpperCase();
-  }
 
   static String _time(String? iso) {
     final t = DateTime.tryParse(iso ?? '')?.toLocal();

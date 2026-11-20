@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -157,7 +158,10 @@ class SettingsPage extends ConsumerWidget {
     );
     if (ok != true) return;
     final controller = ref.read(tabsProvider.notifier).activeController;
-    if (history) ref.read(historyProvider.notifier).clear();
+    if (history) {
+      ref.read(historyProvider.notifier).clear();
+      ref.read(recentlyClosedProvider.notifier).clear();
+    }
     if (cookies) {
       await WebViewCookieManager().clearCookies();
       await controller.clearLocalStorage();
@@ -172,31 +176,37 @@ class SettingsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final s = ref.watch(browserSettingsProvider);
     final notifier = ref.read(browserSettingsProvider.notifier);
-    final isDark = ref.watch(themeProvider) == ThemeMode.dark;
+    final themeMode = ref.watch(themeProvider);
+    final accent = ref.watch(accentColorProvider);
 
-    Widget header(String t) => Padding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
-          child: Text(t.toUpperCase(),
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.1,
-                  )),
+    Widget section(String t, Color color, List<Widget> children) => _SectionColor(
+          color: color,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 20, 16, 6),
+              child: Text(t,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w600,
+                      )),
+            ),
+            Card(clipBehavior: Clip.antiAlias, child: Column(children: children)),
+          ]),
         );
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         children: [
-          header('General'),
+          section('General', Colors.blue, [
           ListTile(
-            leading: const Icon(Icons.short_text),
+            leading: const _Badge(Icons.short_text),
             title: const Text('Search shortcuts'),
             subtitle: Text('Type "w taj mahal" for Wikipedia. ${ref.watch(searchShortcutsProvider).length} shortcuts'),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchShortcutsPage())),
           ),
           ListTile(
-            leading: const Icon(Icons.search),
+            leading: const _Badge(Icons.search),
             title: const Text('Search engine'),
             subtitle: Text(s.engine.label),
             onTap: () => showModalBottomSheet(
@@ -219,7 +229,7 @@ class SettingsPage extends ConsumerWidget {
             ),
           ),
           ListTile(
-            leading: const Icon(Icons.open_in_browser),
+            leading: const _Badge(Icons.open_in_browser),
             title: const Text('Default browser'),
             subtitle: Text(switch (ref.watch(isDefaultBrowserProvider)) {
               AsyncData(value: true) => 'Debug Browser opens links from other apps',
@@ -231,32 +241,32 @@ class SettingsPage extends ConsumerWidget {
             },
           ),
           ListTile(
-            leading: const Icon(Icons.dashboard_customize_outlined),
+            leading: const _Badge(Icons.dashboard_customize_outlined),
             title: const Text('New Tab page'),
             subtitle: Text(s.newTabPage ? 'On: ${s.newTabTheme.label} theme' : 'Off'),
             onTap: () => showCustomizeSheet(context),
           ),
           ListTile(
-            leading: const Icon(Icons.home_outlined),
+            leading: const _Badge(Icons.home_outlined),
             title: const Text('Homepage'),
             subtitle: Text(s.homepage),
             onTap: () => _editHomepage(context, ref, s),
           ),
           SwitchListTile(
-            secondary: const Icon(Icons.tab),
+            secondary: const _Badge(Icons.tab),
             title: const Text('Reopen tabs on start'),
             value: s.restoreTabs,
             onChanged: (v) => notifier.update((x) => x.copyWith(restoreTabs: v)),
           ),
           SwitchListTile(
-            secondary: const Icon(Icons.manage_search),
+            secondary: const _Badge(Icons.manage_search),
             title: const Text('Search suggestions'),
             subtitle: Text('Suggestions from ${s.engine.label} as you type. Off in private tabs and with a proxy.'),
             value: s.searchSuggestions,
             onChanged: (v) => notifier.update((x) => x.copyWith(searchSuggestions: v)),
           ),
           ListTile(
-            leading: const Icon(Icons.translate),
+            leading: const _Badge(Icons.translate),
             title: const Text('Translate pages into'),
             subtitle: Text(translateLanguages[effectiveTranslateLang(s)] ?? effectiveTranslateLang(s)),
             onTap: () => showModalBottomSheet(
@@ -282,41 +292,77 @@ class SettingsPage extends ConsumerWidget {
             ),
           ),
           SwitchListTile(
-            secondary: const Icon(Icons.https_outlined),
+            secondary: const _Badge(Icons.https_outlined),
             title: const Text('HTTPS-only mode'),
             subtitle: const Text('Open sites securely; ask before using an insecure connection'),
             value: s.httpsOnly,
             onChanged: (v) => notifier.update((x) => x.copyWith(httpsOnly: v)),
           ),
           SwitchListTile(
-            secondary: const Icon(Icons.unfold_less),
+            secondary: const _Badge(Icons.unfold_less),
             title: const Text('Hide toolbars while scrolling'),
             subtitle: const Text('More room for the page; scroll up to bring them back'),
             value: s.autoHideToolbars,
             onChanged: (v) => notifier.update((x) => x.copyWith(autoHideToolbars: v)),
           ),
           SwitchListTile(
-            secondary: const Icon(Icons.refresh),
+            secondary: const _Badge(Icons.refresh),
             title: const Text('Pull to refresh'),
             value: s.pullToRefresh,
             onChanged: (v) => notifier.update((x) => x.copyWith(pullToRefresh: v)),
           ),
           SwitchListTile(
-            secondary: const Icon(Icons.exit_to_app),
+            secondary: const _Badge(Icons.exit_to_app),
             title: const Text('Ask before exiting'),
             subtitle: const Text('Confirm when the back button would close the app'),
             value: s.confirmExit,
             onChanged: (v) => notifier.update((x) => x.copyWith(confirmExit: v)),
           ),
-          SwitchListTile(
-            secondary: const Icon(Icons.dark_mode_outlined),
-            title: const Text('Dark theme'),
-            value: isDark,
-            onChanged: (_) => ref.read(themeProvider.notifier).toggle(),
-          ),
-          header('Privacy'),
+          ]),
+          section('Appearance', Colors.purple, [
+            ListTile(
+              leading: const _Badge(Icons.palette_outlined),
+              title: const Text('Theme'),
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: SegmentedButton<ThemeMode>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(value: ThemeMode.system, icon: Icon(Icons.brightness_auto_outlined), label: Text('System')),
+                    ButtonSegment(value: ThemeMode.light, icon: Icon(Icons.light_mode_outlined), label: Text('Light')),
+                    ButtonSegment(value: ThemeMode.dark, icon: Icon(Icons.dark_mode_outlined), label: Text('Dark')),
+                  ],
+                  selected: {themeMode},
+                  onSelectionChanged: (v) {
+                    HapticFeedback.selectionClick();
+                    ref.read(themeProvider.notifier).set(v.first);
+                  },
+                ),
+              ),
+            ),
+            ListTile(
+              leading: const _Badge(Icons.color_lens_outlined),
+              title: const Text('Accent colour'),
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Wrap(spacing: 10, runSpacing: 8, children: [
+                  for (final e in accentColors.entries)
+                    _AccentDot(
+                      color: Color(e.value),
+                      name: e.key,
+                      selected: e.value == accent,
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        ref.read(accentColorProvider.notifier).set(e.value);
+                      },
+                    ),
+                ]),
+              ),
+            ),
+          ]),
+          section('Privacy', Colors.green, [
           ListTile(
-            leading: const Icon(Icons.vpn_lock_outlined),
+            leading: const _Badge(Icons.vpn_lock_outlined),
             title: const Text('Proxy / VPN'),
             subtitle: Text(ref.watch(proxyStatusProvider) == ProxyStatus.active
                 ? 'On: ${ref.watch(proxySettingsProvider).host}'
@@ -324,63 +370,66 @@ class SettingsPage extends ConsumerWidget {
             onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ProxyPage())),
           ),
           SwitchListTile(
-            secondary: const Icon(Icons.auto_delete_outlined),
+            secondary: const _Badge(Icons.auto_delete_outlined),
             title: const Text('Clear data when exiting'),
             subtitle: const Text('History, cookies and cache are deleted when you leave the app'),
             value: s.clearOnExit,
             onChanged: (v) => notifier.update((x) => x.copyWith(clearOnExit: v)),
           ),
           SwitchListTile(
-            secondary: const Icon(Icons.fingerprint),
+            secondary: const _Badge(Icons.fingerprint),
             title: const Text('Lock private tabs'),
             subtitle: const Text('Fingerprint or screen lock to reopen private tabs after leaving the app'),
             value: s.lockPrivateTabs,
             onChanged: (v) => notifier.update((x) => x.copyWith(lockPrivateTabs: v)),
           ),
           ListTile(
-            leading: const Icon(Icons.delete_outline),
+            leading: const _Badge(Icons.delete_outline),
             title: const Text('Clear browsing data'),
             subtitle: const Text('History, cookies, cache'),
             onTap: () => _clearData(context, ref),
           ),
-          header('Developer'),
+          ]),
+          section('Developer', Colors.deepOrange, [
           SwitchListTile(
-            secondary: const Icon(Icons.bug_report_outlined),
+            secondary: const _Badge(Icons.bug_report_outlined),
             title: const Text('Floating debug bubble'),
             subtitle: const Text('Live error and request counts over the page'),
             value: s.showDebugBubble,
             onChanged: (v) => notifier.update((x) => x.copyWith(showDebugBubble: v)),
           ),
           ListTile(
-            leading: const Icon(Icons.developer_mode),
+            leading: const _Badge(Icons.developer_mode),
             title: const Text('Open developer tools'),
             onTap: () {
               Navigator.pop(context);
               ref.read(homeTabProvider.notifier).select(AppTab.console);
             },
           ),
-          header('Backup'),
+          ]),
+          section('Backup', Colors.indigo, [
           ListTile(
-            leading: const Icon(Icons.backup_outlined),
+            leading: const _Badge(Icons.backup_outlined),
             title: const Text('Back up'),
             subtitle: const Text('Bookmarks, settings, extensions, scripts and more, in one file'),
             onTap: () => _exportBackup(context, ref),
           ),
           ListTile(
-            leading: const Icon(Icons.settings_backup_restore),
+            leading: const _Badge(Icons.settings_backup_restore),
             title: const Text('Restore from backup'),
             subtitle: const Text('Adds what is missing; nothing is deleted'),
             onTap: () => _importBackup(context, ref),
           ),
-          header('About'),
+          ]),
+          section('About', Colors.blueGrey, [
           const AboutListTile(
-            icon: Icon(Icons.info_outline),
+            icon: _Badge(Icons.info_outline),
             applicationIcon: ClipRRect(
               borderRadius: BorderRadius.all(Radius.circular(12)),
               child: SizedBox(width: 48, height: 48, child: CustomPaint(painter: LogoPainter(background: true, scale: 0.86))),
             ),
             applicationName: 'Debug Browser',
-            applicationVersion: '2.2.0',
+            applicationVersion: '2.3.0',
             applicationLegalese: '© InnovateX Technology',
             aboutBoxChildren: [
               SizedBox(height: 12),
@@ -388,8 +437,71 @@ class SettingsPage extends ConsumerWidget {
                   'data leaves the device only when you choose to share or export it.'),
             ],
           ),
+          ]),
+          const SizedBox(height: 24),
         ],
       ),
     );
   }
+}
+
+
+/// Colour of the icon badges in one settings section.
+class _SectionColor extends InheritedWidget {
+  final Color color;
+  const _SectionColor({required this.color, required super.child});
+  @override
+  bool updateShouldNotify(_SectionColor old) => old.color != color;
+}
+
+/// Small rounded tinted square behind a settings icon.
+class _Badge extends StatelessWidget {
+  final IconData icon;
+  const _Badge(this.icon);
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.dependOnInheritedWidgetOfExactType<_SectionColor>()?.color ?? Theme.of(context).colorScheme.primary;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(color: c.withValues(alpha: dark ? 0.22 : 0.14), borderRadius: BorderRadius.circular(10)),
+      child: Icon(icon, size: 20, color: dark ? Color.lerp(c, Colors.white, 0.35) : c),
+    );
+  }
+}
+
+class _AccentDot extends StatelessWidget {
+  final Color color;
+  final String name;
+  final bool selected;
+  final VoidCallback onTap;
+  const _AccentDot({required this.color, required this.name, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+        message: name,
+        child: Semantics(
+          button: true,
+          selected: selected,
+          label: '$name accent',
+          child: InkResponse(
+            onTap: onTap,
+            radius: 24,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutBack,
+              width: selected ? 38 : 32,
+              height: selected ? 38 : 32,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: Border.all(color: selected ? Theme.of(context).colorScheme.onSurface : Colors.transparent, width: 2.5),
+              ),
+              child: selected ? const Icon(Icons.check, size: 18, color: Colors.white) : null,
+            ),
+          ),
+        ),
+      );
 }

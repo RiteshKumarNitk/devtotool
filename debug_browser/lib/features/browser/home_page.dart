@@ -27,6 +27,7 @@ import 'browser_menu.dart';
 import 'downloads_page.dart';
 import 'debug_bubble.dart';
 import 'tab_switcher.dart';
+import 'tab_actions.dart';
 
 /// The main screen: a Chrome/Firefox-style browser. Developer tools open
 /// from the menu or the floating bubble.
@@ -37,11 +38,13 @@ class HomePage extends ConsumerStatefulWidget {
   ConsumerState<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver {
+class _HomePageState extends ConsumerState<HomePage>
+    with WidgetsBindingObserver {
   // ------------------------------------------------------- private tab lock
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
       final lockOn = ref.read(browserSettingsProvider).lockPrivateTabs;
       if (lockOn && ref.read(tabsProvider).tabs.any((t) => t.isPrivate)) {
         ref.read(privateLockProvider.notifier).lock();
@@ -109,7 +112,9 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
   void _onPip(bool inPip) {
     setState(() => _inPip = inPip);
     if (!inPip) {
-      ref.read(tabsProvider.notifier).activeController
+      ref
+          .read(tabsProvider.notifier)
+          .activeController
           .runJavaScript('window.__dbg && window.__dbg.focusVideo(false)')
           .catchError((Object _) {});
     }
@@ -129,49 +134,85 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
         builder: (c, set) => SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Hide this on $host?', style: Theme.of(c).textTheme.titleMedium),
-              const SizedBox(height: 6),
-              if ('${picked['text']}'.isNotEmpty)
-                Text('"${picked['text']}"', maxLines: 2, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.grey)),
-              const SizedBox(height: 6),
-              Text('${picked['tag']} • matches ${picked['count']} element${picked['count'] == 1 ? '' : 's'}',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
-              const SizedBox(height: 12),
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                if (picked['canGrow'] == true)
-                  OutlinedButton.icon(
-                    onPressed: () => Navigator.pop(c, 'parent'),
-                    icon: const Icon(Icons.open_in_full, size: 18),
-                    label: const Text('Bigger'),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Hide this on $host?',
+                  style: Theme.of(c).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 6),
+                if ('${picked['text']}'.isNotEmpty)
+                  Text(
+                    '"${picked['text']}"',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontStyle: FontStyle.italic,
+                      color: Colors.grey,
+                    ),
                   ),
-                OutlinedButton.icon(
-                  onPressed: () {
-                    preview = !preview;
-                    js.runJavaScript('window.__dbg && window.__dbg.pickPreview($preview)');
-                    set(() {});
-                  },
-                  icon: Icon(preview ? Icons.visibility : Icons.visibility_off, size: 18),
-                  label: Text(preview ? 'Show again' : 'Preview'),
+                const SizedBox(height: 6),
+                Text(
+                  '${picked['tag']} • matches ${picked['count']} element${picked['count'] == 1 ? '' : 's'}',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
-                FilledButton.icon(
-                  onPressed: () => Navigator.pop(c, 'hide'),
-                  icon: const Icon(Icons.block, size: 18),
-                  label: const Text('Hide on this site'),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (picked['canGrow'] == true)
+                      OutlinedButton.icon(
+                        onPressed: () => Navigator.pop(c, 'parent'),
+                        icon: const Icon(Icons.open_in_full, size: 18),
+                        label: const Text('Bigger'),
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        preview = !preview;
+                        js.runJavaScript(
+                          'window.__dbg && window.__dbg.pickPreview($preview)',
+                        );
+                        set(() {});
+                      },
+                      icon: Icon(
+                        preview ? Icons.visibility : Icons.visibility_off,
+                        size: 18,
+                      ),
+                      label: Text(preview ? 'Show again' : 'Preview'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: () => Navigator.pop(c, 'hide'),
+                      icon: const Icon(Icons.block, size: 18),
+                      label: const Text('Hide on this site'),
+                    ),
+                  ],
                 ),
-              ]),
-            ]),
+              ],
+            ),
           ),
         ),
       ),
     );
     ref.read(pageDataProvider.notifier).put('element_picked', const {});
     if (choice == 'parent') {
-      await js.runJavaScript('window.__dbg && window.__dbg.pickPreview(false); window.__dbg && window.__dbg.pickParent()');
+      await js.runJavaScript(
+        'window.__dbg && window.__dbg.pickPreview(false); window.__dbg && window.__dbg.pickParent()',
+      );
     } else if (choice == 'hide') {
-      ref.read(extensionsProvider.notifier).update((x) => x.withSite(host, (o) => o.copyWith(hidden: [...o.hidden, selector])));
-      await js.runJavaScript('window.__dbg && window.__dbg.hideSelector(${jsString(selector)})');
+      ref
+          .read(extensionsProvider.notifier)
+          .update(
+            (x) => x.withSite(
+              host,
+              (o) => o.copyWith(hidden: [...o.hidden, selector]),
+            ),
+          );
+      await js.runJavaScript(
+        'window.__dbg && window.__dbg.hideSelector(${jsString(selector)})',
+      );
       _snack('Hidden on $host. Undo from the shield in the address bar.');
     } else {
       await js.runJavaScript('window.__dbg && window.__dbg.pickCancel()');
@@ -199,16 +240,21 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
     ref.read(highlightsProvider.notifier).add(h);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: const Text('Highlighted'),
-        action: SnackBarAction(
-          label: 'Add note',
-          onPressed: () async {
-            final note = await editHighlightNote(context, h);
-            if (note != null) ref.read(highlightsProvider.notifier).update(h.id, (x) => x.copyWith(note: note.trim()));
-          },
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('Highlighted'),
+          action: SnackBarAction(
+            label: 'Add note',
+            onPressed: () async {
+              final note = await editHighlightNote(context, h);
+              if (note != null)
+                ref
+                    .read(highlightsProvider.notifier)
+                    .update(h.id, (x) => x.copyWith(note: note.trim()));
+            },
+          ),
         ),
-      ));
+      );
   }
 
   Future<void> _onHighlightTap(String id) async {
@@ -221,51 +267,68 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
       context: context,
       showDragHandle: true,
       builder: (c) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(
-            title: Text(h.text, maxLines: 4, overflow: TextOverflow.ellipsis),
-            subtitle: h.note.isEmpty ? null : Text('📝 ${h.note}'),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(children: [
-              for (final e in highlightSwatches.entries)
-                Padding(
-                  padding: const EdgeInsets.only(right: 10),
-                  child: InkWell(
-                    onTap: () {
-                      Navigator.pop(c);
-                      ref.read(highlightsProvider.notifier).update(h.id, (x) => x.copyWith(color: e.key));
-                      js.runJavaScript(
-                          'window.__dbg && (window.__dbg.removeHighlight(${jsString(h.id)}), window.__dbg.applyHighlights(${jsString(ref.read(highlightsProvider.notifier).pageJson(h.url))}))');
-                    },
-                    child: CircleAvatar(radius: 14, backgroundColor: e.value),
-                  ),
-                ),
-            ]),
-          ),
-          ListTile(
-            leading: const Icon(Icons.edit_note),
-            title: Text(h.note.isEmpty ? 'Add note' : 'Edit note'),
-            onTap: () async {
-              Navigator.pop(c);
-              final note = await editHighlightNote(context, h);
-              if (note != null) ref.read(highlightsProvider.notifier).update(h.id, (x) => x.copyWith(note: note.trim()));
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.delete_outline),
-            title: const Text('Remove highlight'),
-            onTap: () {
-              Navigator.pop(c);
-              ref.read(highlightsProvider.notifier).remove(h.id);
-              js.runJavaScript('window.__dbg && window.__dbg.removeHighlight(${jsString(h.id)})');
-            },
-          ),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(h.text, maxLines: 4, overflow: TextOverflow.ellipsis),
+              subtitle: h.note.isEmpty ? null : Text('📝 ${h.note}'),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  for (final e in highlightSwatches.entries)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 10),
+                      child: InkWell(
+                        onTap: () {
+                          Navigator.pop(c);
+                          ref
+                              .read(highlightsProvider.notifier)
+                              .update(h.id, (x) => x.copyWith(color: e.key));
+                          js.runJavaScript(
+                            'window.__dbg && (window.__dbg.removeHighlight(${jsString(h.id)}), window.__dbg.applyHighlights(${jsString(ref.read(highlightsProvider.notifier).pageJson(h.url))}))',
+                          );
+                        },
+                        child: CircleAvatar(
+                          radius: 14,
+                          backgroundColor: e.value,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_note),
+              title: Text(h.note.isEmpty ? 'Add note' : 'Edit note'),
+              onTap: () async {
+                Navigator.pop(c);
+                final note = await editHighlightNote(context, h);
+                if (note != null)
+                  ref
+                      .read(highlightsProvider.notifier)
+                      .update(h.id, (x) => x.copyWith(note: note.trim()));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Remove highlight'),
+              onTap: () {
+                Navigator.pop(c);
+                ref.read(highlightsProvider.notifier).remove(h.id);
+                js.runJavaScript(
+                  'window.__dbg && window.__dbg.removeHighlight(${jsString(h.id)})',
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
+
   void _onToolbars() => setState(() {});
 
   void _onPopupBlocked() {
@@ -565,7 +628,6 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
   /// Back on the New Tab page (the end of the back chain): ask before exiting.
   Future<void> _onBackAtStart() async {
     final tabsState = ref.read(tabsProvider);
-    final tabs = ref.read(tabsProvider.notifier);
     final settings = ref.read(browserSettingsProvider);
     if (!settings.confirmExit) {
       await _exitApp();
@@ -608,7 +670,12 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
     );
     if (choice == null) return;
     if (choice == 'close_tab') {
-      tabs.closeTab(tabsState.activeId);
+      if (mounted)
+        closeTabWithUndo(
+          context,
+          ProviderScope.containerOf(context, listen: false).read,
+          tabsState.activeId,
+        );
     } else if (choice == 'exit') {
       await _exitApp();
     }
@@ -716,7 +783,9 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
                       Positioned.fill(
                         child: TabTransition(
                           tabId: tab.id,
-                          direction: ref.read(tabsProvider.notifier).lastSwitchDirection,
+                          direction: ref
+                              .read(tabsProvider.notifier)
+                              .lastSwitchDirection,
                           child: _WebArea(
                             tab: tab,
                             controller: ref
@@ -727,7 +796,9 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
                         ),
                       ),
                       if (tab.isPrivate && ref.watch(privateLockProvider))
-                        Positioned.fill(child: _PrivateLocked(onUnlock: _unlockPrivate)),
+                        Positioned.fill(
+                          child: _PrivateLocked(onUnlock: _unlockPrivate),
+                        ),
                       if (tab.error != null)
                         Positioned.fill(
                           child: _ErrorPage(
@@ -755,7 +826,9 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
                         Positioned.fill(
                           child: IgnorePointer(
                             child: ColoredBox(
-                              color: const Color(0xFFFF8F00).withValues(alpha: settings.nightLightStrength * 0.55),
+                              color: const Color(0xFFFF8F00).withValues(
+                                alpha: settings.nightLightStrength * 0.55,
+                              ),
                             ),
                           ),
                         ),
@@ -958,15 +1031,33 @@ class _AddressBar extends ConsumerWidget {
                   : (d) {
                       final v = d.primaryVelocity ?? 0;
                       if (v.abs() < 300) return;
+                      HapticFeedback.selectionClick();
                       ref
                           .read(tabsProvider.notifier)
                           .switchRelative(v < 0 ? 1 : -1);
                     },
-              child: Container(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(22),
+                  color: editing
+                      ? scheme.surfaceContainerLowest
+                      : scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(editing ? 14 : 22),
+                  border: Border.all(
+                    color: editing ? scheme.primary : Colors.transparent,
+                    width: 1.5,
+                  ),
+                  boxShadow: editing
+                      ? [
+                          BoxShadow(
+                            color: scheme.primary.withValues(alpha: 0.18),
+                            blurRadius: 10,
+                            offset: const Offset(0, 2),
+                          ),
+                        ]
+                      : const [],
                 ),
                 child: Row(
                   children: [
@@ -1136,44 +1227,55 @@ class _BottomBar extends ConsumerWidget {
                 icon: const Icon(Icons.home_outlined),
                 onPressed: tabs.goHome,
               ),
-              IconButton(
-                tooltip: 'Tabs',
-                onPressed: () async {
-                  // Preview of the current page for the switcher.
-                  await captureActiveTabThumbnail(ref);
-                  if (context.mounted) {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const TabSwitcherPage(),
+              GestureDetector(
+                // Long-press: new tab, private tab, reopen, close.
+                onLongPress: () => showTabsQuickMenu(
+                  context,
+                  ProviderScope.containerOf(context, listen: false).read,
+                ),
+                child: IconButton(
+                  tooltip: 'Tabs (long-press for more)',
+                  onPressed: () async {
+                    // Preview of the current page for the switcher.
+                    await captureActiveTabThumbnail(ref);
+                    if (context.mounted) {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const TabSwitcherPage(),
+                        ),
+                      );
+                    }
+                  },
+                  icon: Container(
+                    width: 24,
+                    height: 24,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.onSurface,
+                        width: 2,
                       ),
-                    );
-                  }
-                },
-                icon: Container(
-                  width: 24,
-                  height: 24,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.onSurface,
-                      width: 2,
+                      borderRadius: BorderRadius.circular(5),
                     ),
-                    borderRadius: BorderRadius.circular(5),
-                  ),
-                  // The count pops when tabs are opened or closed.
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 260),
-                    transitionBuilder: (child, anim) => ScaleTransition(
-                      scale: Tween(begin: 0.4, end: 1.0)
-                          .animate(CurvedAnimation(parent: anim, curve: Curves.elasticOut)),
-                      child: FadeTransition(opacity: anim, child: child),
-                    ),
-                    child: Text(
-                      tabCount > 99 ? ':D' : '$tabCount',
-                      key: ValueKey(tabCount),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
+                    // The count pops when tabs are opened or closed.
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 260),
+                      transitionBuilder: (child, anim) => ScaleTransition(
+                        scale: Tween(begin: 0.4, end: 1.0).animate(
+                          CurvedAnimation(
+                            parent: anim,
+                            curve: Curves.elasticOut,
+                          ),
+                        ),
+                        child: FadeTransition(opacity: anim, child: child),
+                      ),
+                      child: Text(
+                        tabCount > 99 ? ':D' : '$tabCount',
+                        key: ValueKey(tabCount),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
@@ -1243,10 +1345,21 @@ class _Suggestions extends ConsumerWidget {
           child: ListView(
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             children: [
+              if (q.isEmpty) _PasteChip(onPaste: onSearch),
               if (shortcut != null)
                 ListTile(
-                  leading: CircleAvatar(radius: 14, child: Text(shortcut.$1.keyword, style: const TextStyle(fontSize: 11))),
-                  title: Text(shortcut.$2, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  leading: CircleAvatar(
+                    radius: 14,
+                    child: Text(
+                      shortcut.$1.keyword,
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                  ),
+                  title: Text(
+                    shortcut.$2,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   subtitle: Text('Search ${shortcut.$1.name}'),
                   onTap: () => onSearch(q),
                 )
@@ -1327,6 +1440,41 @@ class _Suggestions extends ConsumerWidget {
       },
     );
   }
+}
+
+/// "Paste and go" when the clipboard has text. Only checks *whether* there
+/// is text (no "pasted from" toast); the text is read when tapped.
+class _PasteChip extends StatelessWidget {
+  final void Function(String) onPaste;
+  const _PasteChip({required this.onPaste});
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<bool>(
+    future: Clipboard.hasStrings(),
+    builder: (context, snap) {
+      if (snap.data != true) return const SizedBox.shrink();
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: ActionChip(
+            avatar: const Icon(Icons.content_paste_go, size: 18),
+            label: const Text('Paste and go'),
+            onPressed: () async {
+              final text =
+                  (await Clipboard.getData(
+                    Clipboard.kTextPlain,
+                  ))?.text?.trim() ??
+                  '';
+              if (text.isEmpty) return;
+              HapticFeedback.selectionClick();
+              onPaste(text.length > 2000 ? text.substring(0, 2000) : text);
+            },
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class _FindBar extends ConsumerWidget {
@@ -1543,7 +1691,6 @@ class _PullIndicator extends ConsumerWidget {
   }
 }
 
-
 /// Shown over private tabs while they're locked.
 class _PrivateLocked extends StatelessWidget {
   final VoidCallback onUnlock;
@@ -1551,26 +1698,38 @@ class _PrivateLocked extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        color: const Color(0xFF1B1036),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.lock, size: 56, color: Color(0xFFB39DDB)),
-            const SizedBox(height: 16),
-            const Text('Private tabs are locked',
-                style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            const Text('Use your fingerprint, face or screen lock to continue.',
-                textAlign: TextAlign.center, style: TextStyle(color: Colors.white70)),
-            const SizedBox(height: 24),
-            FilledButton.icon(onPressed: onUnlock, icon: const Icon(Icons.fingerprint), label: const Text('Unlock')),
-          ],
+    color: const Color(0xFF1B1036),
+    alignment: Alignment.center,
+    padding: const EdgeInsets.all(32),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.lock, size: 56, color: Color(0xFFB39DDB)),
+        const SizedBox(height: 16),
+        const Text(
+          'Private tabs are locked',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+          ),
         ),
-      );
+        const SizedBox(height: 8),
+        const Text(
+          'Use your fingerprint, face or screen lock to continue.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white70),
+        ),
+        const SizedBox(height: 24),
+        FilledButton.icon(
+          onPressed: onUnlock,
+          icon: const Icon(Icons.fingerprint),
+          label: const Text('Unlock'),
+        ),
+      ],
+    ),
+  );
 }
-
 
 /// Player controls while an article is being read aloud.
 class _ReadAloudBar extends ConsumerWidget {
@@ -1585,43 +1744,70 @@ class _ReadAloudBar extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
     return Material(
       color: scheme.secondaryContainer,
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        LinearProgressIndicator(value: st.status == ReadAloudStatus.loading ? null : st.progress, minHeight: 2),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 2, 4, 2),
-          child: Row(children: [
-            const Icon(Icons.record_voice_over, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                st.title.isEmpty ? 'Reading aloud' : st.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LinearProgressIndicator(
+            value: st.status == ReadAloudStatus.loading ? null : st.progress,
+            minHeight: 2,
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 2, 4, 2),
+            child: Row(
+              children: [
+                const Icon(Icons.record_voice_over, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    st.title.isEmpty ? 'Reading aloud' : st.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Previous paragraph',
+                  icon: const Icon(Icons.skip_previous),
+                  onPressed: () => n.skip(-1),
+                ),
+                IconButton(
+                  tooltip: st.status == ReadAloudStatus.playing
+                      ? 'Pause'
+                      : 'Play',
+                  icon: Icon(
+                    st.status == ReadAloudStatus.playing
+                        ? Icons.pause
+                        : Icons.play_arrow,
+                  ),
+                  onPressed: st.status == ReadAloudStatus.playing
+                      ? n.pause
+                      : n.resume,
+                ),
+                IconButton(
+                  tooltip: 'Next paragraph',
+                  icon: const Icon(Icons.skip_next),
+                  onPressed: () => n.skip(1),
+                ),
+                TextButton(
+                  onPressed: () {
+                    final i = _rates.indexOf(st.rate);
+                    n.setRate(_rates[(i + 1) % _rates.length]);
+                  },
+                  child: Text('${st.rate}×'),
+                ),
+                IconButton(
+                  tooltip: 'Stop',
+                  icon: const Icon(Icons.close),
+                  onPressed: n.stop,
+                ),
+              ],
             ),
-            IconButton(tooltip: 'Previous paragraph', icon: const Icon(Icons.skip_previous), onPressed: () => n.skip(-1)),
-            IconButton(
-              tooltip: st.status == ReadAloudStatus.playing ? 'Pause' : 'Play',
-              icon: Icon(st.status == ReadAloudStatus.playing ? Icons.pause : Icons.play_arrow),
-              onPressed: st.status == ReadAloudStatus.playing ? n.pause : n.resume,
-            ),
-            IconButton(tooltip: 'Next paragraph', icon: const Icon(Icons.skip_next), onPressed: () => n.skip(1)),
-            TextButton(
-              onPressed: () {
-                final i = _rates.indexOf(st.rate);
-                n.setRate(_rates[(i + 1) % _rates.length]);
-              },
-              child: Text('${st.rate}×'),
-            ),
-            IconButton(tooltip: 'Stop', icon: const Icon(Icons.close), onPressed: n.stop),
-          ]),
-        ),
-      ]),
+          ),
+        ],
+      ),
     );
   }
 }
-
 
 /// Animates changing tabs: slide from the right/left when moving to the
 /// next/previous tab (swipe on the address bar, new tab), and fade + slight
@@ -1633,33 +1819,44 @@ class TabTransition extends StatelessWidget {
   /// +1 next, -1 previous, 0 jump.
   final int direction;
   final Widget child;
-  const TabTransition({super.key, required this.tabId, required this.direction, required this.child});
+  const TabTransition({
+    super.key,
+    required this.tabId,
+    required this.direction,
+    required this.child,
+  });
 
   @override
   Widget build(BuildContext context) {
     final reduce = MediaQuery.of(context).disableAnimations;
     return ClipRect(
       child: AnimatedSwitcher(
-        duration: reduce ? Duration.zero : Duration(milliseconds: direction == 0 ? 260 : 320),
+        duration: reduce
+            ? Duration.zero
+            : Duration(milliseconds: direction == 0 ? 260 : 320),
         switchInCurve: Curves.easeOutCubic,
         switchOutCurve: Curves.easeInCubic,
-        layoutBuilder: (current, previous) => Stack(
-          fit: StackFit.expand,
-          children: [...previous, ?current],
-        ),
+        layoutBuilder: (current, previous) =>
+            Stack(fit: StackFit.expand, children: [...previous, ?current]),
         transitionBuilder: (child, anim) {
           final incoming = child.key == ValueKey(tabId);
           if (direction == 0) {
             return FadeTransition(
               opacity: anim,
               child: ScaleTransition(
-                scale: Tween(begin: incoming ? 0.94 : 1.03, end: 1.0).animate(anim),
+                scale: Tween(
+                  begin: incoming ? 0.94 : 1.03,
+                  end: 1.0,
+                ).animate(anim),
                 child: child,
               ),
             );
           }
           // Incoming enters from the swipe side; outgoing leaves the other way.
-          final from = Offset((incoming ? direction : -direction).toDouble(), 0);
+          final from = Offset(
+            (incoming ? direction : -direction).toDouble(),
+            0,
+          );
           return SlideTransition(
             position: Tween(begin: from, end: Offset.zero).animate(anim),
             child: FadeTransition(
@@ -1673,7 +1870,6 @@ class TabTransition extends StatelessWidget {
     );
   }
 }
-
 
 /// Horizontal tab strip for wide screens.
 class TabStrip extends ConsumerWidget {
@@ -1690,57 +1886,86 @@ class TabStrip extends ConsumerWidget {
       color: scheme.surfaceContainer,
       child: SizedBox(
         height: 40,
-        child: Row(children: [
-          Expanded(
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.only(left: 6, top: 4),
-              itemCount: shown.length,
-              itemBuilder: (context, i) {
-                final t = shown[i];
-                final active = t.id == state.activeId;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 2),
-                  child: Material(
-                    color: active ? scheme.surface : Colors.transparent,
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
-                    child: InkWell(
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
-                      onTap: () => tabs.activate(t.id),
-                      child: SizedBox(
-                        width: 200,
-                        child: Row(children: [
-                          const SizedBox(width: 10),
-                          if (t.isNewTab)
-                            Icon(t.isPrivate ? Icons.privacy_tip_outlined : Icons.home_outlined, size: 16)
-                          else
-                            SiteIcon(url: t.url, size: 16, radius: 3),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(t.displayTitle, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 13, fontWeight: active ? FontWeight.w600 : FontWeight.normal)),
+        child: Row(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.only(left: 6, top: 4),
+                itemCount: shown.length,
+                itemBuilder: (context, i) {
+                  final t = shown[i];
+                  final active = t.id == state.activeId;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 2),
+                    child: Material(
+                      color: active ? scheme.surface : Colors.transparent,
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(10),
+                      ),
+                      child: InkWell(
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(10),
+                        ),
+                        onTap: () => tabs.activate(t.id),
+                        child: SizedBox(
+                          width: 200,
+                          child: Row(
+                            children: [
+                              const SizedBox(width: 10),
+                              if (t.isNewTab)
+                                Icon(
+                                  t.isPrivate
+                                      ? Icons.privacy_tip_outlined
+                                      : Icons.home_outlined,
+                                  size: 16,
+                                )
+                              else
+                                SiteIcon(url: t.url, size: 16, radius: 3),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  t.displayTitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: active
+                                        ? FontWeight.w600
+                                        : FontWeight.normal,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                visualDensity: VisualDensity.compact,
+                                iconSize: 16,
+                                tooltip: 'Close tab',
+                                icon: const Icon(Icons.close),
+                                onPressed: () => closeTabWithUndo(
+                                  context,
+                                  ProviderScope.containerOf(
+                                    context,
+                                    listen: false,
+                                  ).read,
+                                  t.id,
+                                ),
+                              ),
+                            ],
                           ),
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            iconSize: 16,
-                            tooltip: 'Close tab',
-                            icon: const Icon(Icons.close),
-                            onPressed: () => tabs.closeTab(t.id),
-                          ),
-                        ]),
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
-          ),
-          IconButton(
-            tooltip: 'New tab',
-            icon: const Icon(Icons.add),
-            onPressed: () => tabs.newTab(private: private),
-          ),
-        ]),
+            IconButton(
+              tooltip: 'New tab',
+              icon: const Icon(Icons.add),
+              onPressed: () => tabs.newTab(private: private),
+            ),
+          ],
+        ),
       ),
     );
   }

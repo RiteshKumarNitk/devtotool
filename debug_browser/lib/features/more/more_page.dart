@@ -65,7 +65,8 @@ class MorePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     void open(Widget page) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
-    final isDark = ref.watch(themeProvider) == ThemeMode.dark;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    ref.watch(themeProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Tools')),
@@ -153,7 +154,7 @@ class MorePage extends ConsumerWidget {
             secondary: const Icon(Icons.dark_mode),
             title: const Text('Dark theme'),
             value: isDark,
-            onChanged: (_) => ref.read(themeProvider.notifier).toggle(),
+            onChanged: (_) => ref.read(themeProvider.notifier).toggle(current: Theme.of(context).brightness),
           ),
           const AboutListTile(
             icon: Icon(Icons.info_outline),

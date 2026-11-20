@@ -133,14 +133,52 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
   @override
   ThemeMode build() {
     final saved = _settingsBoxOrNull()?.get(_key) as String?;
-    return saved == 'light' ? ThemeMode.light : ThemeMode.dark;
+    return switch (saved) {
+      'light' => ThemeMode.light,
+      'dark' => ThemeMode.dark,
+      _ => ThemeMode.system, // follow the phone by default
+    };
   }
 
-  void toggle() {
-    state = state == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
-    _settingsBoxOrNull()?.put(_key, state == ThemeMode.light ? 'light' : 'dark');
+  void set(ThemeMode mode) {
+    state = mode;
+    _settingsBoxOrNull()?.put(_key, mode.name);
+  }
+
+  /// Flips between light and dark (from whatever is showing now).
+  void toggle({Brightness? current}) {
+    final dark = state == ThemeMode.dark || (state == ThemeMode.system && current == Brightness.dark);
+    set(dark ? ThemeMode.light : ThemeMode.dark);
   }
 }
+
+/// Accent colours offered in Settings (seed for the Material 3 scheme).
+const accentColors = <String, int>{
+  'Blue': 0xFF1A73E8,
+  'Teal': 0xFF00897B,
+  'Purple': 0xFF7E57C2,
+  'Orange': 0xFFF4511E,
+  'Pink': 0xFFD81B60,
+  'Green': 0xFF43A047,
+};
+
+class AccentColorNotifier extends Notifier<int> {
+  static const _key = 'accentColor';
+
+  @override
+  int build() {
+    final v = _settingsBoxOrNull()?.get(_key);
+    return v is int && accentColors.containsValue(v) ? v : accentColors['Blue']!;
+  }
+
+  void set(int color) {
+    if (!accentColors.containsValue(color)) return;
+    state = color;
+    _settingsBoxOrNull()?.put(_key, color);
+  }
+}
+
+final accentColorProvider = NotifierProvider<AccentColorNotifier, int>(AccentColorNotifier.new);
 
 final themeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(ThemeModeNotifier.new);
 

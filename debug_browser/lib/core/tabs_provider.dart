@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ui' show Color;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -175,6 +176,39 @@ class TabsState {
   BrowserTab get active => tabs.firstWhere((t) => t.id == activeId, orElse: () => tabs.first);
   int get activeIndex => tabs.indexWhere((t) => t.id == activeId);
 }
+
+/// A tab the user closed, kept so it can be reopened (session only; never
+/// private tabs or the New Tab page).
+@immutable
+class ClosedTab {
+  final String url;
+  final String title;
+  final String? group;
+  final int index;
+  final DateTime closedAt;
+  const ClosedTab({required this.url, required this.title, required this.index, required this.closedAt, this.group});
+}
+
+class RecentlyClosedNotifier extends Notifier<List<ClosedTab>> {
+  static const max = 25;
+  @override
+  List<ClosedTab> build() => const [];
+
+  void push(ClosedTab t) {
+    state = [t, ...state.where((x) => x.url != t.url)].take(max).toList();
+  }
+
+  ClosedTab? pop([ClosedTab? which]) {
+    if (state.isEmpty) return null;
+    final t = which ?? state.first;
+    state = [...state]..remove(t);
+    return t;
+  }
+
+  void clear() => state = const [];
+}
+
+final recentlyClosedProvider = NotifierProvider<RecentlyClosedNotifier, List<ClosedTab>>(RecentlyClosedNotifier.new);
 
 /// A page asked for a link menu (long-press). Shown by the browser shell.
 @immutable
@@ -374,6 +408,16 @@ class TabsNotifier extends Notifier<TabsState> {
   void closeTab(String id) {
     final i = state.tabs.indexWhere((t) => t.id == id);
     if (i < 0) return;
+    final closing = state.tabs[i];
+    if (!closing.isPrivate && !closing.isNewTab && closing.url.startsWith('http')) {
+      ref.read(recentlyClosedProvider.notifier).push(ClosedTab(
+            url: closing.url,
+            title: closing.displayTitle,
+            group: closing.group,
+            index: i,
+            closedAt: DateTime.now(),
+          ));
+    }
     final tabs = [...state.tabs]..removeAt(i);
     _controllers.remove(id)?.loadRequest(Uri.parse('about:blank'));
     _sdkActive.remove(id);
@@ -403,6 +447,21 @@ class TabsNotifier extends Notifier<TabsState> {
     _persist();
   }
 
+  /// Reopens the last closed tab (or [which]) at its old position.
+  /// Returns false when there is nothing to reopen.
+  bool reopenClosed([ClosedTab? which]) {
+    final t = ref.read(recentlyClosedProvider.notifier).pop(which);
+    if (t == null) return false;
+    final id = newTab(url: t.url);
+    final tabs = [...state.tabs];
+    final cur = tabs.indexWhere((x) => x.id == id);
+    final tab = tabs.removeAt(cur).copyWith(title: t.title, group: () => t.group);
+    tabs.insert(t.index.clamp(0, tabs.length), tab);
+    state = TabsState(tabs, state.activeId);
+    _persist();
+    return true;
+  }
+
   /// Called before the app exits from the Back prompt.
   Future<void> prepareForExit() async {
     closePrivateTabs();
@@ -412,6 +471,7 @@ class TabsNotifier extends Notifier<TabsState> {
 
   Future<void> _clearBrowsingData() async {
     ref.read(historyProvider.notifier).clear();
+    ref.read(recentlyClosedProvider.notifier).clear();
     await WebViewCookieManager().clearCookies();
     for (final c in _controllers.values) {
       await c.clearCache().catchError((Object _) {});
@@ -1067,10 +1127,16 @@ class TabsNotifier extends Notifier<TabsState> {
         final st = msg.data['state'];
         final d = (msg.data['d'] as num?)?.toDouble() ?? 0;
         if (st == 'move') {
+          final was = pullDistance.value ?? 0;
+          // A tick when the pull passes the point where letting go reloads.
+          if (was < pullTrigger && d >= pullTrigger) HapticFeedback.selectionClick();
           pullDistance.value = d;
         } else {
           pullDistance.value = null;
-          if (st == 'release' && d >= pullTrigger && _settings.pullToRefresh) reload();
+          if (st == 'release' && d >= pullTrigger && _settings.pullToRefresh) {
+            HapticFeedback.lightImpact();
+            reload();
+          }
         }
       }
       return;
