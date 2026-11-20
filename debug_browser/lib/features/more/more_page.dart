@@ -4,6 +4,10 @@ import '../../core/providers.dart';
 import '../../services/bug_report_service.dart';
 import '../console/snippets_page.dart';
 import '../device/device_page.dart';
+import 'package:share_plus/share_plus.dart';
+import '../../core/page_tools.dart';
+import '../../core/tool_providers.dart';
+import '../tools/audit_page.dart';
 import 'a11y_page.dart';
 import 'emulation_page.dart';
 import 'environments_page.dart';
@@ -81,6 +85,33 @@ class MorePage extends ConsumerWidget {
             onTap: () => open(const SessionsPage()),
           ),
           const _Header('Audit'),
+          ListTile(
+            leading: const Icon(Icons.speed, color: Color(0xFF0CCE6B)),
+            title: const Text('Page audit'),
+            subtitle: const Text('Performance, accessibility, best practices and SEO scores'),
+            onTap: () => open(const AuditPage()),
+          ),
+          ListTile(
+            leading: const Icon(Icons.devices_other),
+            title: const Text('Responsive screenshots'),
+            subtitle: const Text('Capture the page at phone, tablet and desktop sizes'),
+            onTap: () async {
+              // This page closes now; keep app-wide handles for the capture.
+              final read = ProviderScope.containerOf(context, listen: false).read;
+              final messenger = ScaffoldMessenger.of(context);
+              ref.read(homeTabProvider.notifier).select(AppTab.browser);
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Capturing phone, tablet and desktop views…'), duration: Duration(seconds: 6)),
+              );
+              final shots = await captureResponsive(read);
+              if (shots.isEmpty) return;
+              final paths = await writeTempPngs(shots, 'responsive');
+              await SharePlus.instance.share(ShareParams(
+                files: [for (final p in paths) XFile(p, mimeType: 'image/png')],
+                text: [for (final s in shots) s.$1].join(', '),
+              ));
+            },
+          ),
           ListTile(
             leading: const Icon(Icons.accessibility_new, color: Colors.teal),
             title: const Text('Accessibility audit'),

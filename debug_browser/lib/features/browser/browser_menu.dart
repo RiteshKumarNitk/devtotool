@@ -17,6 +17,10 @@ import '../settings/proxy_page.dart';
 import '../settings/settings_page.dart';
 import 'bookmarks_page.dart';
 import 'downloads_page.dart';
+import '../../core/page_tools.dart';
+import '../../core/read_aloud.dart';
+import '../tools/offline_pages_page.dart';
+import '../tools/source_viewer_page.dart';
 
 /// Chrome-style overflow menu. Developer tools live here, not in the footer.
 void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback onFind}) {
@@ -31,6 +35,8 @@ void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback
       final bookmarked = ref.watch(bookmarksProvider).any((b) => b['url'] == tab.url);
       final errors = ref.watch(consoleLogsProvider.select((l) => l.where((x) => x.level == 'error').length));
       final nav = Navigator.of(context);
+      // App-wide reader: stays valid after this sheet closes.
+      final read = ProviderScope.containerOf(context, listen: false).read;
       final running = ref.watch(downloadsProvider.select((l) => l.where((d) => d.status == DownloadStatus.running).length));
 
       void close() => Navigator.pop(sheet);
@@ -158,9 +164,31 @@ void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback
               ListTile(
                 leading: const Icon(Icons.screenshot_outlined),
                 title: const Text('Screenshot'),
+                subtitle: const Text('Visible area or the whole page'),
                 onTap: () async {
                   close();
-                  final png = await ref.read(screenshotControllerProvider).capture();
+                  final full = await showModalBottomSheet<bool>(
+                    context: context,
+                    showDragHandle: true,
+                    builder: (c) => SafeArea(
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        ListTile(
+                          leading: const Icon(Icons.crop_portrait),
+                          title: const Text('Visible area'),
+                          onTap: () => Navigator.pop(c, false),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.vertical_split),
+                          title: const Text('Full page'),
+                          subtitle: const Text('Scrolls and stitches the whole page'),
+                          onTap: () => Navigator.pop(c, true),
+                        ),
+                      ]),
+                    ),
+                  );
+                  if (full == null) return;
+                  if (full) snack('Capturing the full page…');
+                  final png = full ? await captureFullPage(read) : await read(screenshotControllerProvider).capture();
                   if (png == null) {
                     snack('Screenshot failed');
                     return;
@@ -170,6 +198,72 @@ void showBrowserMenu(BuildContext context, WidgetRef ref, {required VoidCallback
                   await f.writeAsBytes(png);
                   await SharePlus.instance.share(ShareParams(files: [XFile(f.path)], text: tab.displayTitle));
                 },
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Text('Page tools', style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Wrap(
+                  alignment: WrapAlignment.spaceAround,
+                  children: [
+                    _Quick(
+                      icon: Icons.translate,
+                      label: 'Translate',
+                      onTap: () {
+                        close();
+                        if (tab.isNewTab) return snack('Open a web page first');
+                        final lang = effectiveTranslateLang(settings);
+                        tabs.loadUri(translateUri(tab.url, lang));
+                      },
+                    ),
+                    _Quick(
+                      icon: Icons.record_voice_over_outlined,
+                      label: 'Read aloud',
+                      onTap: () async {
+                        close();
+                        final err = await ref.read(readAloudProvider.notifier).start();
+                        if (err != null) snack(err);
+                      },
+                    ),
+                    _Quick(
+                      icon: Icons.download_for_offline_outlined,
+                      label: 'Save offline',
+                      onTap: () async {
+                        close();
+                        final err = await ref.read(offlinePagesProvider.notifier).saveActive();
+                        snack(err ?? 'Saved. Find it in Offline pages.');
+                      },
+                    ),
+                    _Quick(
+                      icon: Icons.add_to_home_screen,
+                      label: 'Home screen',
+                      onTap: () async {
+                        close();
+                        if (tab.isNewTab) return snack('Open a web page first');
+                        final ok = await addActiveToHomeScreen(read);
+                        if (!ok) snack('Your launcher does not support adding shortcuts');
+                      },
+                    ),
+                    _Quick(
+                      icon: Icons.code,
+                      label: 'Source',
+                      onTap: () async {
+                        close();
+                        if (tab.isNewTab) return snack('Open a web page first');
+                        final html = jsResultString(await tabs.activeController
+                            .runJavaScriptReturningResult('document.documentElement.outerHTML'));
+                        nav.push(MaterialPageRoute(builder: (_) => SourceViewerPage(url: tab.url, source: html)));
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.offline_pin_outlined),
+                title: const Text('Offline pages'),
+                onTap: () => push(const OfflinePagesPage()),
               ),
               const Divider(),
               ListTile(

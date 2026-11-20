@@ -182,6 +182,22 @@ abstract final class SystemBrowser {
     }
   }
 
+  /// Keeps the window out of Recents thumbnails / screenshots (private tabs).
+  static Future<void> setSecure(bool secure) async {
+    try {
+      await _channel.invokeMethod('setSecure', {'secure': secure});
+    } catch (_) {}
+  }
+
+  /// Pins a Home-screen shortcut for [url]. False if the launcher can't.
+  static Future<bool> pinShortcut(String url, String title, Uint8List? icon) async {
+    try {
+      return await _channel.invokeMethod<bool>('pinShortcut', {'url': url, 'title': title, 'icon': icon}) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Shows the system "set as default browser" prompt. True if now default.
   static Future<bool> requestDefault() async {
     try {

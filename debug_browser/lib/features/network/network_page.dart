@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network_export.dart';
 import '../../core/providers.dart';
 import '../../services/export_service.dart';
+import 'replay_page.dart';
 
 class NetworkPage extends ConsumerStatefulWidget {
   const NetworkPage({super.key});
@@ -241,6 +242,13 @@ class _NetworkPageState extends ConsumerState<NetworkPage> {
                   icon: const Icon(Icons.ios_share, size: 18),
                   label: const Text('Export HAR'),
                   onPressed: () => _exportHar([req]),
+                ),
+                FilledButton.tonalIcon(
+                  icon: const Icon(Icons.replay, size: 18),
+                  label: const Text('Edit & resend'),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => ReplayPage(request: req)),
+                  ),
                 ),
               ],
             ),

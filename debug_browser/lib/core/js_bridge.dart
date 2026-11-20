@@ -120,6 +120,8 @@ BridgeMessage? parseBridgeMessage(String raw) {
     case 'dom_tree':
     case 'a11y':
     case 'find_result':
+    case 'page_audit':
+    case 'replay_result':
       return PageDataMessage(type as String, map);
     case 'ui':
       final kind = map['kind'];

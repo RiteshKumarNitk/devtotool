@@ -56,8 +56,9 @@ void main() {
     expect(ntp.isNewTab, isTrue);
     expect(ntp.displayTitle, 'New tab');
     expect(ntp.isSecure, isFalse);
-    expect(ntp.canNavigateBack, isFalse, reason: 'nothing behind a fresh New Tab page');
-    expect(ntp.copyWith(lastWebUrl: () => 'https://a.test').canNavigateBack, isTrue);
+    expect(ntp.canNavigateBack, isFalse, reason: 'the New Tab page is the end of the Back chain');
+    expect(ntp.copyWith(lastWebUrl: () => 'https://a.test').canNavigateBack, isFalse,
+        reason: 'Back on the New Tab page asks to exit, even over an earlier page');
     const fromNtp = BrowserTab(id: '2', url: 'https://a.test', ntpBehind: true);
     expect(fromNtp.canNavigateBack, isTrue, reason: 'back returns to the New Tab page');
     expect(const BrowserTab(id: '3', url: newTabUrl, isPrivate: true).displayTitle, 'Private tab');

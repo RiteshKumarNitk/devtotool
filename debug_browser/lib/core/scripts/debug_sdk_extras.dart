@@ -558,6 +558,158 @@ const String debugSdkExtrasJs = r'''
     };
 
     // ---------------------------------------------------------------
+    // Read aloud: plain article text (same article detection as reader)
+    // ---------------------------------------------------------------
+    dbg.readerText = function () {
+        const src = findArticle() || document.body;
+        if (!src) return JSON.stringify({ title: document.title, text: '' });
+        const clone = src.cloneNode(true);
+        clone.querySelectorAll('script,style,noscript,iframe,nav,aside,footer,form,button,figure figcaption,[aria-hidden="true"]').forEach(function (n) { n.remove(); });
+        const blocks = [];
+        clone.querySelectorAll('h1,h2,h3,h4,p,li,blockquote').forEach(function (n) {
+            const t = (n.innerText || n.textContent || '').replace(/\s+/g, ' ').trim();
+            if (t.length > 1) blocks.push(t);
+        });
+        let h1 = null;
+        for (let n = src; n && !h1; n = n.parentElement) h1 = n.querySelector('h1');
+        const title = ((h1 && (h1.innerText || h1.textContent)) || document.title || '').trim();
+        if (blocks.length && blocks[0] === title) blocks.shift();
+        return JSON.stringify({ title: title, text: blocks.join('\n') });
+    };
+
+    // ---------------------------------------------------------------
+    // JSON viewer for API responses opened as a page
+    // ---------------------------------------------------------------
+    (function jsonViewer() {
+        const ct = (document.contentType || '').toLowerCase();
+        if (ct.indexOf('json') < 0 || !document.body) return;
+        const raw = document.body.innerText || document.body.textContent || '';
+        if (raw.length > 5 * 1024 * 1024) return;
+        let data;
+        try { data = JSON.parse(raw); } catch (e) { return; }
+        const esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+        function render(v, key, depth) {
+            const k = key === null ? '' : '<span class="k">' + esc(key) + '</span>: ';
+            if (v === null) return '<div>' + k + '<span class="n">null</span></div>';
+            if (Array.isArray(v) || typeof v === 'object') {
+                const isArr = Array.isArray(v);
+                const keys = isArr ? v.map(function (_, i) { return i; }) : Object.keys(v);
+                const summary = isArr ? '[' + keys.length + ']' : '{' + keys.length + '}';
+                const inner = keys.slice(0, 2000).map(function (kk) { return render(v[kk], isArr ? kk : kk, depth + 1); }).join('');
+                return '<details' + (depth < 2 ? ' open' : '') + '><summary>' + k + '<span class="c">' + summary + '</span></summary>' + inner + '</details>';
+            }
+            const cls = typeof v === 'string' ? 's' : typeof v === 'number' ? 'num' : 'b';
+            return '<div>' + k + '<span class="' + cls + '">' + esc(typeof v === 'string' ? JSON.stringify(v) : v) + '</span></div>';
+        }
+        document.head.insertAdjacentHTML('beforeend', '<meta name="viewport" content="width=device-width,initial-scale=1"><style>' +
+            'body{margin:0;font:13px/1.55 ui-monospace,Menlo,monospace;background:#fff;color:#1f2328}' +
+            '@media (prefers-color-scheme:dark){body{background:#1e1f22;color:#e3e3e3}}' +
+            '.bar{position:sticky;top:0;display:flex;gap:8px;padding:8px;background:inherit;border-bottom:1px solid #8884}' +
+            '.bar button{font:600 13px system-ui;padding:6px 12px;border-radius:14px;border:1px solid #8886;background:none;color:inherit}' +
+            '#tree,#raw{padding:8px 12px}#tree details,#tree div{margin-left:14px}#tree>details,#tree>div{margin-left:0}' +
+            'summary{cursor:pointer}.k{color:#a626a4}.s{color:#22863a}.num{color:#1a73e8}.b{color:#e36209}.n{color:#888}.c{color:#888}' +
+            '#raw{white-space:pre-wrap;word-break:break-all;display:none}</style>');
+        document.body.innerHTML = '<div class="bar"><button data-v="tree">Pretty</button><button data-v="raw">Raw</button><button data-v="copy">Copy</button></div>' +
+            '<div id="tree">' + render(data, null, 0) + '</div><pre id="raw"></pre>';
+        document.getElementById('raw').textContent = JSON.stringify(data, null, 2);
+        document.querySelector('.bar').addEventListener('click', function (e) {
+            const v = e.target.getAttribute && e.target.getAttribute('data-v');
+            if (v === 'tree' || v === 'raw') {
+                document.getElementById('tree').style.display = v === 'tree' ? '' : 'none';
+                document.getElementById('raw').style.display = v === 'raw' ? 'block' : 'none';
+            } else if (v === 'copy' && navigator.clipboard) {
+                navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+            }
+        });
+    })();
+
+    // ---------------------------------------------------------------
+    // Page audit: SEO + best-practice checks (scored in Dart)
+    // ---------------------------------------------------------------
+    dbg.pageAudit = function () {
+        const meta = function (sel) { const m = document.querySelector(sel); return m ? (m.getAttribute('content') || '').trim() : ''; };
+        const imgs = Array.prototype.slice.call(document.images);
+        const genericLinks = Array.prototype.filter.call(document.querySelectorAll('a[href]'), function (a) {
+            return /^(click here|here|read more|more|link|learn more)$/i.test((a.innerText || a.textContent || '').trim());
+        }).length;
+        let mixed = 0;
+        if (location.protocol === 'https:') {
+            document.querySelectorAll('img[src],script[src],link[href][rel=stylesheet],iframe[src],video[src],audio[src]').forEach(function (el) {
+                const u = el.getAttribute('src') || el.getAttribute('href') || '';
+                if (/^http:\/\//i.test(u)) mixed++;
+            });
+        }
+        let robots = meta('meta[name="robots"]').toLowerCase();
+        send('page_audit', {
+            url: location.href,
+            https: location.protocol === 'https:',
+            title: document.title || '',
+            description: meta('meta[name="description"]'),
+            h1Count: document.querySelectorAll('h1').length,
+            viewport: meta('meta[name="viewport"]'),
+            lang: document.documentElement.getAttribute('lang') || '',
+            canonical: !!document.querySelector('link[rel="canonical"]'),
+            noindex: robots.indexOf('noindex') >= 0,
+            ogTags: document.querySelectorAll('meta[property^="og:"]').length,
+            structuredData: document.querySelectorAll('script[type="application/ld+json"]').length,
+            images: imgs.length,
+            imagesMissingAlt: imgs.filter(function (i) { return !i.hasAttribute('alt'); }).length,
+            genericLinks: genericLinks,
+            mixedContent: mixed,
+            doctype: !!document.doctype,
+            charset: !!document.querySelector('meta[charset], meta[http-equiv="Content-Type" i]'),
+            domNodes: document.getElementsByTagName('*').length,
+            fontSizeSmall: (function () {
+                let small = 0, total = 0;
+                document.querySelectorAll('p,li,span,a,td').forEach(function (el) {
+                    if (total > 400 || !(el.textContent || '').trim()) return;
+                    total++;
+                    if (parseFloat(getComputedStyle(el).fontSize) < 12) small++;
+                });
+                return total ? small / total : 0;
+            })()
+        });
+    };
+
+    // ---------------------------------------------------------------
+    // Edit & resend: replay a request from the page (its cookies, origin)
+    // ---------------------------------------------------------------
+    dbg.replay = function (id, req) {
+        const t0 = performance.now();
+        const init = { method: req.method || 'GET', headers: req.headers || {}, credentials: 'include' };
+        if (req.body && !/^(GET|HEAD)$/i.test(init.method)) init.body = req.body;
+        fetch(req.url, init).then(function (res) {
+            const headers = {};
+            res.headers.forEach(function (v, k) { headers[k] = v; });
+            return res.text().then(function (body) {
+                send('replay_result', {
+                    id: id, status: res.status, statusText: res.statusText, headers: headers,
+                    body: body.length > 200000 ? body.substring(0, 200000) + '\n… [truncated]' : body,
+                    ms: Math.round(performance.now() - t0)
+                });
+            });
+        }).catch(function (e) {
+            send('replay_result', { id: id, error: String(e), ms: Math.round(performance.now() - t0) });
+        });
+    };
+
+    // ---------------------------------------------------------------
+    // Full-page screenshot helpers
+    // ---------------------------------------------------------------
+    dbg.pageMetrics = function () {
+        const h = Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);
+        return JSON.stringify({ height: h, viewport: window.innerHeight, y: window.scrollY });
+    };
+    dbg.hideFixed = function (hide) {
+        let s = document.getElementById('__dbg_hidefixed');
+        if (!hide) { if (s) s.remove(); document.querySelectorAll('[data-dbg-fixed]').forEach(function (el) { el.style.visibility = el.getAttribute('data-dbg-fixed'); el.removeAttribute('data-dbg-fixed'); }); return; }
+        document.querySelectorAll('body *').forEach(function (el) {
+            const p = getComputedStyle(el).position;
+            if (p === 'fixed' || p === 'sticky') { el.setAttribute('data-dbg-fixed', el.style.visibility || ''); el.style.visibility = 'hidden'; }
+        });
+    };
+
+    // ---------------------------------------------------------------
     // Geolocation override
     // ---------------------------------------------------------------
     const realGeo = navigator.geolocation;

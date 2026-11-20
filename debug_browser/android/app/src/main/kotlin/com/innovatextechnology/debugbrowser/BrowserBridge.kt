@@ -50,6 +50,16 @@ class BrowserBridge(private val engine: FlutterEngine) : MethodChannel.MethodCal
                     wv?.settings?.textZoom = call.argument<Number>("percent")!!.toInt().coerceIn(50, 300)
                     result.success(wv != null)
                 }
+                "saveWebArchive" -> {
+                    @Suppress("DEPRECATION")
+                    val wv = WebViewFlutterAndroidExternalApi.getWebView(engine, call.argument<Number>("id")!!.toLong())
+                    if (wv == null) {
+                        result.success(null)
+                    } else {
+                        // Saves the page as a single MHTML file (offline reading).
+                        wv.saveWebArchive(call.argument<String>("path")!!, false) { saved -> result.success(saved) }
+                    }
+                }
                 "proxySupported" -> result.success(WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE))
                 "setProxy" -> setProxy(call, result)
                 "clearProxy" -> clearProxy(result)

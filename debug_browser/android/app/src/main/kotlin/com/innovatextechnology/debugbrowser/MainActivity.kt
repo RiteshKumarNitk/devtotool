@@ -9,7 +9,16 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
-import io.flutter.embedding.android.FlutterActivity
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.drawable.Icon
+import android.view.WindowManager
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
@@ -21,7 +30,7 @@ import java.io.File
  *  - open / share: hands a content:// URI to other apps
  *  - delete: removes a file this app saved to Downloads
  */
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterFragmentActivity() {
     private val channelName = "com.innovatextechnology.debugbrowser/downloads"
     private val linksChannelName = "com.innovatextechnology.debugbrowser/links"
     private val roleRequestCode = 4711
@@ -49,6 +58,36 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         webUrlOf(intent)?.let { linksChannel?.invokeMethod("openUrl", it) }
+    }
+
+    /** Asks the launcher to pin a Home-screen shortcut that opens [url] here. */
+    private fun pinShortcut(url: String, title: String, iconBytes: ByteArray?): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        val sm = getSystemService(ShortcutManager::class.java) ?: return false
+        if (!sm.isRequestPinShortcutSupported) return false
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage(packageName)
+        val label = title.ifBlank { Uri.parse(url).host ?: url }.take(40)
+        val icon = iconBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }?.let { framedIcon(it) }
+            ?.let { Icon.createWithAdaptiveBitmap(it) }
+            ?: Icon.createWithResource(this, R.mipmap.ic_launcher)
+        val info = ShortcutInfo.Builder(this, "site-" + url.hashCode())
+            .setShortLabel(label)
+            .setIcon(icon)
+            .setIntent(intent)
+            .build()
+        return sm.requestPinShortcut(info, null)
+    }
+
+    /** Site icon centred on a white adaptive-icon canvas (108dp grid). */
+    private fun framedIcon(src: Bitmap): Bitmap {
+        val size = 216
+        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out)
+        c.drawColor(android.graphics.Color.WHITE)
+        val inner = size * 0.42f
+        val left = (size - inner) / 2f
+        c.drawBitmap(src, null, RectF(left, left, left + inner, left + inner), Paint(Paint.FILTER_BITMAP_FLAG))
+        return out
     }
 
     private fun isDefaultBrowser(): Boolean {
@@ -126,6 +165,22 @@ class MainActivity : FlutterActivity() {
                     }
                     "isDefaultBrowser" -> result.success(isDefaultBrowser())
                     "requestDefaultBrowser" -> requestDefaultBrowser(result)
+                    "setSecure" -> {
+                        // Private tabs: keep them out of Recents thumbnails and screenshots.
+                        if (call.argument<Boolean>("secure") == true) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        }
+                        result.success(true)
+                    }
+                    "pinShortcut" -> result.success(
+                        pinShortcut(
+                            call.argument<String>("url")!!,
+                            call.argument<String>("title") ?: "",
+                            call.argument<ByteArray>("icon")
+                        )
+                    )
                     "pickTextFile" -> {
                         pendingPickResult?.success(null)
                         pendingPickResult = result

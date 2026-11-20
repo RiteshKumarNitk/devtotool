@@ -55,6 +55,10 @@ class BrowserTab {
   /// HTTPS-only: the http:// address whose secure version failed to load.
   final String? insecureFallback;
 
+  /// Tab that opened this one (link in new tab): back at the start returns
+  /// there, like Chrome.
+  final String? openerId;
+
   const BrowserTab({
     required this.id,
     required this.url,
@@ -72,6 +76,7 @@ class BrowserTab {
     this.lastWebTitle,
     this.ntpBehind = false,
     this.insecureFallback,
+    this.openerId,
   });
 
   bool get isNewTab => url == newTabUrl;
@@ -83,7 +88,10 @@ class BrowserTab {
           : (Uri.tryParse(url)?.host ?? url);
 
   /// Whether Back does something (page history, or the New Tab page).
-  bool get canNavigateBack => isNewTab ? lastWebUrl != null : (canGoBack || ntpBehind);
+  /// Whether the toolbar Back button does something here. Every page has a
+  /// way back (history, opener tab or the New Tab page); the New Tab page
+  /// is the end, where Back offers to exit.
+  bool get canNavigateBack => !isNewTab;
 
   BrowserTab copyWith({
     String? url,
@@ -118,7 +126,36 @@ class BrowserTab {
         lastWebTitle: lastWebTitle != null ? lastWebTitle() : this.lastWebTitle,
         ntpBehind: ntpBehind ?? this.ntpBehind,
         insecureFallback: insecureFallback != null ? insecureFallback() : this.insecureFallback,
+        openerId: openerId,
       );
+}
+
+/// Private tabs are locked (after leaving the app, if enabled).
+class PrivateLockNotifier extends Notifier<bool> {
+  @override
+  bool build() => false;
+  void lock() => state = true;
+  void unlock() => state = false;
+}
+
+final privateLockProvider = NotifierProvider<PrivateLockNotifier, bool>(PrivateLockNotifier.new);
+
+/// What Back does next in the active tab.
+enum BackStep { history, opener, newTab, exit }
+
+/// Browser-like Back order: page history, then the tab that opened this one,
+/// then the New Tab page; on the New Tab page itself, exit (with a prompt).
+BackStep decideBack({
+  required bool onNewTabPage,
+  required bool hasHistory,
+  required bool hasOpener,
+  required bool newTabPageEnabled,
+}) {
+  if (onNewTabPage) return BackStep.exit;
+  if (hasHistory) return BackStep.history;
+  if (hasOpener) return BackStep.opener;
+  if (newTabPageEnabled) return BackStep.newTab;
+  return BackStep.exit;
 }
 
 @immutable
@@ -207,6 +244,14 @@ class TabsNotifier extends Notifier<TabsState> {
   /// Auto-hiding toolbars: false while the user scrolls down a page.
   final toolbarsVisible = ValueNotifier<bool>(true);
 
+  bool _toolbarsFrozen = false;
+
+  /// Keeps the toolbars shown and still (screenshots resize-sensitive work).
+  void freezeToolbars(bool frozen) {
+    _toolbarsFrozen = frozen;
+    if (frozen) toolbarsVisible.value = true;
+  }
+
   /// Pull to refresh: current pull distance in px, or null when not pulling.
   final pullDistance = ValueNotifier<double?>(null);
   static const double pullTrigger = 110;
@@ -246,6 +291,9 @@ class TabsNotifier extends Notifier<TabsState> {
     Future.microtask(() => _applyProxy(ref.read(proxySettingsProvider)));
     // Wipe anything a crashed private session left behind.
     BrowserNative.clearPrivateData();
+    // "Clear data on exit" also runs at start, in case Android killed the
+    // app without a clean exit.
+    if (_settings.clearOnExit) Future.microtask(_clearBrowsingData);
 
     final restored = <BrowserTab>[];
     var activeIndex = 0;
@@ -253,7 +301,7 @@ class TabsNotifier extends Notifier<TabsState> {
     if (saved is Map && saved['tabs'] is List) {
       for (final t in (saved['tabs'] as List).whereType<Map>().take(maxTabs)) {
         final url = '${t['url'] ?? ''}';
-        if (!url.startsWith('http') && url != newTabUrl) continue;
+        if (!url.startsWith('http') && url != newTabUrl && !url.startsWith('file://')) continue;
         restored.add(BrowserTab(id: _newId(), url: url, title: '${t['title'] ?? ''}', loaded: false));
       }
       activeIndex = (saved['active'] as num?)?.toInt() ?? 0;
@@ -276,14 +324,20 @@ class TabsNotifier extends Notifier<TabsState> {
 
   // ------------------------------------------------------------------ tabs
 
-  String newTab({String? url, bool activate = true, bool private = false}) {
+  String newTab({String? url, bool activate = true, bool private = false, String? openerId}) {
     if (state.tabs.length >= maxTabs) {
       // Reuse the oldest inactive tab rather than growing unbounded.
       final victim = state.tabs.firstWhere((t) => t.id != state.activeId);
       closeTab(victim.id);
     }
     final id = _newId();
-    final tab = BrowserTab(id: id, url: url ?? _settings.homepage, loaded: false, isPrivate: private);
+    final tab = BrowserTab(
+      id: id,
+      url: url ?? _settings.homepage,
+      loaded: false,
+      isPrivate: private,
+      openerId: openerId,
+    );
     if (private) _privatePending.add(id);
     _controllers[id] = _createController(id);
     _privatePending.remove(id);
@@ -328,6 +382,31 @@ class TabsNotifier extends Notifier<TabsState> {
       BrowserNative.clearPrivateData();
     }
     _persist();
+  }
+
+  /// Called before the app exits from the Back prompt.
+  Future<void> prepareForExit() async {
+    closePrivateTabs();
+    await BrowserNative.clearPrivateData();
+    if (_settings.clearOnExit) await _clearBrowsingData();
+  }
+
+  Future<void> _clearBrowsingData() async {
+    ref.read(historyProvider.notifier).clear();
+    await WebViewCookieManager().clearCookies();
+    for (final c in _controllers.values) {
+      await c.clearCache().catchError((Object _) {});
+      await c.clearLocalStorage().catchError((Object _) {});
+    }
+  }
+
+  /// Activates the next/previous tab of the same kind (normal or private).
+  void switchRelative(int delta) {
+    final private = state.active.isPrivate;
+    final same = state.tabs.where((t) => t.isPrivate == private).toList();
+    if (same.length < 2) return;
+    final i = same.indexWhere((t) => t.id == state.activeId);
+    activate(same[(i + delta + same.length) % same.length].id);
   }
 
   /// Closes every private tab (and wipes private data).
@@ -376,7 +455,7 @@ class TabsNotifier extends Notifier<TabsState> {
     if (!tab.loaded) {
       _patch(id, (t) => t.copyWith(loaded: true));
       final ready = _extReady[id] ?? Future<void>.value();
-      ready.whenComplete(() => _controllers[id]?.loadRequest(normaliseUrlInput(tab.url)));
+      ready.whenComplete(() => _loadInto(id, normaliseUrlInput(tab.url)));
     }
   }
 
@@ -412,7 +491,19 @@ class TabsNotifier extends Notifier<TabsState> {
         ));
     _sdkActive.remove(id);
     _pendingNav.putIfAbsent(id, () => {}).add(uri.toString());
-    _controllers[id]?.loadRequest(uri);
+    _loadInto(id, uri);
+  }
+
+  /// Loads [uri] in a tab's WebView; local files (saved offline pages) go
+  /// through WebView's file loader.
+  void _loadInto(String id, Uri uri) {
+    final c = _controllers[id];
+    if (c == null) return;
+    if (uri.scheme == 'file') {
+      c.loadFile(uri.toFilePath());
+    } else {
+      c.loadRequest(uri);
+    }
   }
 
   void goHome() => loadUri(normaliseUrlInput(_settings.homepage));
@@ -447,28 +538,34 @@ class TabsNotifier extends Notifier<TabsState> {
   }
 
   /// Whether Back can do something in the active tab.
-  Future<bool> canGoBackNow() async {
+  /// Browser-like Back, in order: page history -> the tab that opened this
+  /// one -> the New Tab page. The New Tab page is the end (the app then asks
+  /// whether to exit).
+  Future<BackStep> backStep() async {
     final tab = state.active;
-    if (tab.isNewTab) return tab.lastWebUrl != null;
-    return await activeController.canGoBack() || tab.ntpBehind;
+    return decideBack(
+      onNewTabPage: tab.isNewTab,
+      hasHistory: !tab.isNewTab && tab.error == null && await activeController.canGoBack(),
+      hasOpener: tab.openerId != null && _tab(tab.openerId!) != null,
+      newTabPageEnabled: _settings.newTabPage,
+    );
   }
+
+  Future<bool> canGoBackNow() async => await backStep() != BackStep.exit;
 
   Future<void> goBack() async {
     final tab = state.active;
-    if (tab.isNewTab) {
-      // Return to the page the New Tab page was opened over.
-      if (tab.lastWebUrl != null) {
-        _patch(tab.id, (t) => t.copyWith(url: t.lastWebUrl, title: t.lastWebTitle ?? ''));
-        ref.read(currentPageProvider.notifier).set(tab.lastWebUrl!, tab.lastWebTitle ?? '');
-      }
-      return;
-    }
-    final c = activeController;
-    if (await c.canGoBack()) {
-      await c.goBack();
-    } else if (tab.ntpBehind) {
-      _patch(tab.id, (t) => t.copyWith(ntpBehind: false));
-      showNewTabPage(tabId: tab.id);
+    switch (await backStep()) {
+      case BackStep.history:
+        await activeController.goBack();
+      case BackStep.opener:
+        final opener = tab.openerId!;
+        closeTab(tab.id);
+        activate(opener);
+      case BackStep.newTab:
+        showNewTabPage(tabId: tab.id);
+      case BackStep.exit:
+        break;
     }
   }
 
@@ -878,6 +975,7 @@ class TabsNotifier extends Notifier<TabsState> {
     if (msg is UiEventMessage) {
       if (id != state.activeId) return;
       if (msg.kind == 'scroll') {
+        if (_toolbarsFrozen) return;
         final dir = msg.data['dir'];
         if (dir == 'down') toolbarsVisible.value = false;
         if (dir == 'up' || dir == 'top') toolbarsVisible.value = true;
@@ -915,7 +1013,7 @@ class TabsNotifier extends Notifier<TabsState> {
       if (msg.kind == 'popup_blocked') {
         popupBlocked.value = msg.href;
       } else if (msg.kind == 'open_tab') {
-        newTab(url: msg.href, private: _tab(id)?.isPrivate ?? false);
+        newTab(url: msg.href, private: _tab(id)?.isPrivate ?? false, openerId: id);
       } else if (msg.kind == 'blob_download' || msg.kind == 'download_link') {
         downloadUrl(msg.href, suggestedName: '${msg.data['name'] ?? ''}', tabId: id);
       } else {

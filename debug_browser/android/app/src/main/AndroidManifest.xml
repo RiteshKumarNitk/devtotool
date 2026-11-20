@@ -51,6 +51,10 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Text-to-speech engines (Read aloud). -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE"/>
+        </intent>
         <!-- Links the browser hands to other apps (url_launcher, Android 11+). -->
         <intent>
             <action android:name="android.intent.action.DIAL"/>

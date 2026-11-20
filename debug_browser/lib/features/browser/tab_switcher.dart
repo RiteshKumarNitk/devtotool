@@ -117,7 +117,9 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
               itemBuilder: (context, i) {
                 final t = state.tabs[i];
                 final active = t.id == state.activeId;
-                final host = Uri.tryParse(t.url)?.host ?? '';
+                // Locked private tabs don't reveal what's open.
+                final masked = t.isPrivate && ref.watch(privateLockProvider);
+                final host = masked ? '' : (Uri.tryParse(t.url)?.host ?? '');
                 return Dismissible(
                   key: ValueKey(t.id),
                   onDismissed: (_) => tabs.closeTab(t.id),
@@ -145,7 +147,7 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
                               padding: const EdgeInsets.fromLTRB(10, 4, 0, 4),
                               child: Row(
                                 children: [
-                                  if (t.isNewTab)
+                                  if (t.isNewTab || masked)
                                     Icon(
                                       t.isPrivate ? Icons.privacy_tip_outlined : Icons.home_outlined,
                                       size: 16,
@@ -155,7 +157,7 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
                                   const SizedBox(width: 6),
                                   Expanded(
                                     child: Text(
-                                      t.displayTitle,
+                                      masked ? 'Private tab (locked)' : t.displayTitle,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(

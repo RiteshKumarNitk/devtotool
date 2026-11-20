@@ -11,6 +11,7 @@ import '../../core/tool_providers.dart';
 import 'proxy_page.dart';
 import 'dart:convert';
 import '../../core/backup.dart';
+import '../../core/page_tools.dart';
 import '../../services/export_service.dart';
 import '../../core/home_stats.dart';
 import '../newtab/new_tab_page.dart';
@@ -240,6 +241,39 @@ class SettingsPage extends ConsumerWidget {
             onChanged: (v) => notifier.update((x) => x.copyWith(restoreTabs: v)),
           ),
           SwitchListTile(
+            secondary: const Icon(Icons.manage_search),
+            title: const Text('Search suggestions'),
+            subtitle: Text('Suggestions from ${s.engine.label} as you type. Off in private tabs and with a proxy.'),
+            value: s.searchSuggestions,
+            onChanged: (v) => notifier.update((x) => x.copyWith(searchSuggestions: v)),
+          ),
+          ListTile(
+            leading: const Icon(Icons.translate),
+            title: const Text('Translate pages into'),
+            subtitle: Text(translateLanguages[effectiveTranslateLang(s)] ?? effectiveTranslateLang(s)),
+            onTap: () => showModalBottomSheet(
+              context: context,
+              showDragHandle: true,
+              isScrollControlled: true,
+              builder: (c) => SafeArea(
+                child: SizedBox(
+                  height: MediaQuery.sizeOf(c).height * 0.6,
+                  child: ListView(children: [
+                    for (final e in translateLanguages.entries)
+                      ListTile(
+                        leading: Icon(e.key == effectiveTranslateLang(s) ? Icons.radio_button_checked : Icons.radio_button_unchecked),
+                        title: Text(e.value),
+                        onTap: () {
+                          notifier.update((x) => x.copyWith(translateTo: e.key));
+                          Navigator.pop(c);
+                        },
+                      ),
+                  ]),
+                ),
+              ),
+            ),
+          ),
+          SwitchListTile(
             secondary: const Icon(Icons.https_outlined),
             title: const Text('HTTPS-only mode'),
             subtitle: const Text('Open sites securely; ask before using an insecure connection'),
@@ -280,6 +314,20 @@ class SettingsPage extends ConsumerWidget {
                 ? 'On: ${ref.watch(proxySettingsProvider).host}'
                 : "Route browsing through your VPN provider's proxy"),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ProxyPage())),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.auto_delete_outlined),
+            title: const Text('Clear data when exiting'),
+            subtitle: const Text('History, cookies and cache are deleted when you leave the app'),
+            value: s.clearOnExit,
+            onChanged: (v) => notifier.update((x) => x.copyWith(clearOnExit: v)),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.fingerprint),
+            title: const Text('Lock private tabs'),
+            subtitle: const Text('Fingerprint or screen lock to reopen private tabs after leaving the app'),
+            value: s.lockPrivateTabs,
+            onChanged: (v) => notifier.update((x) => x.copyWith(lockPrivateTabs: v)),
           ),
           ListTile(
             leading: const Icon(Icons.delete_outline),
@@ -324,7 +372,7 @@ class SettingsPage extends ConsumerWidget {
               child: SizedBox(width: 48, height: 48, child: CustomPaint(painter: LogoPainter(background: true, scale: 0.86))),
             ),
             applicationName: 'Debug Browser',
-            applicationVersion: '2.0.0',
+            applicationVersion: '2.1.0',
             applicationLegalese: '© InnovateX Technology',
             aboutBoxChildren: [
               SizedBox(height: 12),

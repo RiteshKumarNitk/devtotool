@@ -85,6 +85,19 @@ class BrowserSettings {
   /// Load http:// sites over https://, with a fallback page.
   final bool httpsOnly;
 
+  /// Clear history, cookies and cache when leaving the app.
+  final bool clearOnExit;
+
+  /// Require fingerprint / screen lock to show private tabs after leaving.
+  final bool lockPrivateTabs;
+
+  /// Live suggestions from the search engine while typing (not in private
+  /// tabs or while a proxy is on).
+  final bool searchSuggestions;
+
+  /// Target language for "Translate page" ('' = phone language).
+  final String translateTo;
+
   const BrowserSettings({
     this.engine = SearchEngine.google,
     this.customHomepage = '',
@@ -99,6 +112,10 @@ class BrowserSettings {
     this.autoHideToolbars = true,
     this.pullToRefresh = true,
     this.httpsOnly = true,
+    this.clearOnExit = false,
+    this.lockPrivateTabs = false,
+    this.searchSuggestions = true,
+    this.translateTo = '',
   });
 
   String get homepage {
@@ -120,6 +137,10 @@ class BrowserSettings {
     bool? autoHideToolbars,
     bool? pullToRefresh,
     bool? httpsOnly,
+    bool? clearOnExit,
+    bool? lockPrivateTabs,
+    bool? searchSuggestions,
+    String? translateTo,
   }) =>
       BrowserSettings(
         engine: engine ?? this.engine,
@@ -135,6 +156,10 @@ class BrowserSettings {
         autoHideToolbars: autoHideToolbars ?? this.autoHideToolbars,
         pullToRefresh: pullToRefresh ?? this.pullToRefresh,
         httpsOnly: httpsOnly ?? this.httpsOnly,
+        clearOnExit: clearOnExit ?? this.clearOnExit,
+        lockPrivateTabs: lockPrivateTabs ?? this.lockPrivateTabs,
+        searchSuggestions: searchSuggestions ?? this.searchSuggestions,
+        translateTo: translateTo ?? this.translateTo,
       );
 
   Map<String, dynamic> toJson() => {
@@ -150,6 +175,10 @@ class BrowserSettings {
         'autoHideToolbars': autoHideToolbars,
         'pullToRefresh': pullToRefresh,
         'httpsOnly': httpsOnly,
+        'clearOnExit': clearOnExit,
+        'lockPrivateTabs': lockPrivateTabs,
+        'searchSuggestions': searchSuggestions,
+        'translateTo': translateTo,
         // desktopMode is per-session on purpose (like Chrome's "Desktop site").
       };
 
@@ -168,6 +197,10 @@ class BrowserSettings {
       autoHideToolbars: j['autoHideToolbars'] != false,
       pullToRefresh: j['pullToRefresh'] != false,
       httpsOnly: j['httpsOnly'] != false,
+      clearOnExit: j['clearOnExit'] == true,
+      lockPrivateTabs: j['lockPrivateTabs'] == true,
+      searchSuggestions: j['searchSuggestions'] != false,
+      translateTo: '${j['translateTo'] ?? ''}',
     );
   }
 }
@@ -180,8 +213,19 @@ class BrowserSettingsNotifier extends Notifier<BrowserSettings> {
 
   Box? get _box => Hive.isBoxOpen(settingsBoxName) ? Hive.box(settingsBoxName) : null;
 
+  static const _exitPromptReset = 'exitPromptReset2';
+
   @override
-  BrowserSettings build() => BrowserSettings.fromJson(_box?.get(_key));
+  BrowserSettings build() {
+    var s = BrowserSettings.fromJson(_box?.get(_key));
+    // One-time: the old "Don't ask again" checkbox is gone; ask again.
+    if (_box != null && _box!.get(_exitPromptReset) != true) {
+      s = s.copyWith(confirmExit: true);
+      _box!.put(_key, s.toJson());
+      _box!.put(_exitPromptReset, true);
+    }
+    return s;
+  }
 
   void update(BrowserSettings Function(BrowserSettings) change) {
     state = change(state);

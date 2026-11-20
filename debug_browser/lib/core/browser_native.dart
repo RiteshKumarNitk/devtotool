@@ -43,6 +43,19 @@ abstract final class BrowserNative {
     return _bool('setTextZoom', {'id': platform.webViewIdentifier, 'percent': percent});
   }
 
+  /// Saves the page as an MHTML web archive at [path]. Returns the saved
+  /// path, or null on failure.
+  static Future<String?> saveWebArchive(WebViewController controller, String path) async {
+    final platform = controller.platform;
+    if (platform is! AndroidWebViewController) return null;
+    try {
+      return await _channel.invokeMethod<String>('saveWebArchive', {'id': platform.webViewIdentifier, 'path': path});
+    } catch (e) {
+      debugPrint('saveWebArchive failed: $e');
+      return null;
+    }
+  }
+
   static Future<bool> clearPrivateData() => _bool('clearPrivateData');
 
   static Future<bool> proxySupported() => _bool('proxySupported');

@@ -11,11 +11,14 @@ import '../../core/providers.dart';
 import '../../core/tabs_provider.dart';
 import '../../core/thumbnails.dart';
 import '../../core/tool_providers.dart';
+import 'package:local_auth/local_auth.dart';
 import '../devtools/devtools_page.dart';
 import '../newtab/new_tab_page.dart';
 import '../../core/home_stats.dart';
 import '../../core/extensions.dart';
 import '../../core/favicons.dart';
+import '../../core/search_suggest.dart';
+import '../../core/read_aloud.dart';
 import '../extensions/site_sheet.dart';
 import 'browser_menu.dart';
 import 'downloads_page.dart';
@@ -31,7 +34,37 @@ class HomePage extends ConsumerStatefulWidget {
   ConsumerState<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends ConsumerState<HomePage> {
+class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver {
+  // ------------------------------------------------------- private tab lock
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      final lockOn = ref.read(browserSettingsProvider).lockPrivateTabs;
+      if (lockOn && ref.read(tabsProvider).tabs.any((t) => t.isPrivate)) {
+        ref.read(privateLockProvider.notifier).lock();
+      }
+    }
+  }
+
+  Future<void> _unlockPrivate() async {
+    final auth = LocalAuthentication();
+    try {
+      if (!await auth.isDeviceSupported()) {
+        // No screen lock set up: nothing to verify against.
+        ref.read(privateLockProvider.notifier).unlock();
+        _snack('Set a screen lock on your phone to protect private tabs.');
+        return;
+      }
+      final ok = await auth.authenticate(
+        localizedReason: 'Unlock your private tabs',
+        persistAcrossBackgrounding: true,
+      );
+      if (ok) ref.read(privateLockProvider.notifier).unlock();
+    } catch (e) {
+      _snack('Could not unlock: $e');
+    }
+  }
+
   final _address = TextEditingController();
   final _addressFocus = FocusNode();
   final _findText = TextEditingController();
@@ -155,6 +188,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     HomeTabNotifier.openDevToolsRoute = _openDevTools;
     // Links opened from other apps (when this is the default browser).
     SystemBrowser.listen(
@@ -188,6 +222,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     HomeTabNotifier.openDevToolsRoute = null;
     _downloads.removeListener(_onDownloadStarted);
     _notice.removeListener(_onNotice);
@@ -266,7 +301,10 @@ class _HomePageState extends ConsumerState<HomePage> {
               title: const Text('Open in new tab'),
               onTap: () {
                 Navigator.pop(c);
-                tabs.newTab(url: r.href);
+                tabs.newTab(
+                  url: r.href,
+                  openerId: ref.read(tabsProvider).activeId,
+                );
               },
             ),
             ListTile(
@@ -339,83 +377,62 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  /// Back pressed with no page history: ask instead of closing the app.
+  /// Back on the New Tab page (the end of the back chain): ask before exiting.
   Future<void> _onBackAtStart() async {
     final tabsState = ref.read(tabsProvider);
     final tabs = ref.read(tabsProvider.notifier);
     final settings = ref.read(browserSettingsProvider);
     if (!settings.confirmExit) {
-      await SystemNavigator.pop();
+      await _exitApp();
       return;
     }
     final multiple = tabsState.tabs.length > 1;
     final private = tabsState.active.isPrivate;
-    var dontAsk = false;
     final choice = await showDialog<String>(
       context: context,
-      builder: (c) => StatefulBuilder(
-        builder: (c, set) => AlertDialog(
-          icon: const Icon(Icons.exit_to_app),
-          title: const Text('Exit Debug Browser?'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                multiple
-                    ? 'You have ${tabsState.tabs.length} open tabs. They will be here when you come back.'
-                    : 'Your tab will be here when you come back.',
-              ),
-              if (private)
-                const Padding(
-                  padding: EdgeInsets.only(top: 8),
-                  child: Text(
-                    'Private tabs are closed and their data deleted when the app exits.',
-                    style: TextStyle(fontSize: 13),
-                  ),
-                ),
-              const SizedBox(height: 8),
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                controlAffinity: ListTileControlAffinity.leading,
-                value: dontAsk,
-                title: const Text('Don’t ask again'),
-                onChanged: (v) => set(() => dontAsk = v ?? false),
-              ),
-            ],
-          ),
-          actionsOverflowButtonSpacing: 4,
-          actions: [
-            if (multiple)
-              TextButton(
-                onPressed: () => Navigator.pop(c, 'close_tab'),
-                child: const Text('Close this tab'),
-              ),
-            TextButton(
-              onPressed: () => Navigator.pop(c),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(c, 'exit'),
-              child: const Text('Exit'),
-            ),
-          ],
+      builder: (c) => AlertDialog(
+        icon: const Icon(Icons.exit_to_app),
+        title: const Text('Exit Debug Browser?'),
+        content: Text(
+          [
+            multiple
+                ? 'You have ${tabsState.tabs.length} open tabs. They will be here when you come back.'
+                : 'Your tab will be here when you come back.',
+            if (private) 'Private tabs are closed and their data deleted.',
+            if (settings.clearOnExit)
+              'Browsing data will be cleared, as set in Settings.',
+          ].join('\n\n'),
         ),
+        actionsOverflowButtonSpacing: 4,
+        actions: [
+          if (multiple)
+            TextButton(
+              onPressed: () => Navigator.pop(c, 'close_tab'),
+              child: const Text('Close this tab'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(c, 'exit'),
+            child: const Text('Exit'),
+          ),
+        ],
       ),
     );
     if (choice == null) return;
-    if (dontAsk && choice == 'exit') {
-      ref
-          .read(browserSettingsProvider.notifier)
-          .update((s) => s.copyWith(confirmExit: false));
-    }
     if (choice == 'close_tab') {
       tabs.closeTab(tabsState.activeId);
     } else if (choice == 'exit') {
-      if (private) tabs.closePrivateTabs();
-      await SystemNavigator.pop();
+      await _exitApp();
     }
+  }
+
+  /// Closes private tabs, applies "clear data on exit", then leaves the app.
+  Future<void> _exitApp() async {
+    await ref.read(tabsProvider.notifier).prepareForExit();
+    await SystemNavigator.pop();
   }
 
   void _snack(String t) {
@@ -436,6 +453,9 @@ class _HomePageState extends ConsumerState<HomePage> {
     final settings = ref.watch(browserSettingsProvider);
     ref.listen(linkMenuProvider, (_, next) {
       if (next != null) _showLinkMenu(next);
+    });
+    ref.listen(tabsProvider.select((t) => t.active.isPrivate), (_, private) {
+      SystemBrowser.setSecure(private);
     });
     ref.listen(authPromptProvider, (_, next) {
       if (next != null) _showAuthPrompt(next);
@@ -489,6 +509,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                           onSearchTap: () => _addressFocus.requestFocus(),
                         ),
                       ),
+                      if (tab.isPrivate && ref.watch(privateLockProvider))
+                        Positioned.fill(child: _PrivateLocked(onUnlock: _unlockPrivate)),
                       if (tab.error != null)
                         Positioned.fill(
                           child: _ErrorPage(
@@ -521,6 +543,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                     ],
                   ),
                 ),
+                if (ref.watch(readAloudProvider).active) const _ReadAloudBar(),
                 if (_finding)
                   _FindBar(
                     controller: _findText,
@@ -703,82 +726,101 @@ class _AddressBar extends ConsumerWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-            child: Container(
-              height: 44,
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: Row(
-                children: [
-                  const SizedBox(width: 12),
-                  if (tab.isPrivate) ...[
-                    const Tooltip(
-                      message: 'Private tab',
-                      child: Icon(Icons.privacy_tip, size: 18),
-                    ),
-                    const SizedBox(width: 6),
-                  ],
-                  if (ref.watch(proxyStatusProvider) == ProxyStatus.active) ...[
-                    const Tooltip(
-                      message: 'Traffic goes through your proxy/VPN',
-                      child: Icon(
-                        Icons.vpn_lock,
-                        size: 18,
-                        color: Colors.green,
+            // Swipe the address bar to switch tabs, like Chrome.
+            child: GestureDetector(
+              onHorizontalDragEnd: editing
+                  ? null
+                  : (d) {
+                      final v = d.primaryVelocity ?? 0;
+                      if (v.abs() < 300) return;
+                      ref
+                          .read(tabsProvider.notifier)
+                          .switchRelative(v < 0 ? 1 : -1);
+                    },
+              child: Container(
+                height: 44,
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 12),
+                    if (tab.isPrivate) ...[
+                      const Tooltip(
+                        message: 'Private tab',
+                        child: Icon(Icons.privacy_tip, size: 18),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                  ],
-                  if (editing || tab.isNewTab)
-                    Icon(Icons.search, size: 20, color: scheme.onSurfaceVariant)
-                  else
-                    GestureDetector(
-                      onTap: () => _showSiteInfo(context),
-                      child: Icon(
-                        tab.isSecure ? Icons.lock_outline : Icons.info_outline,
-                        size: 18,
-                        color: tab.isSecure
-                            ? scheme.onSurfaceVariant
-                            : scheme.error,
+                      const SizedBox(width: 6),
+                    ],
+                    if (ref.watch(proxyStatusProvider) ==
+                        ProxyStatus.active) ...[
+                      const Tooltip(
+                        message: 'Traffic goes through your proxy/VPN',
+                        child: Icon(
+                          Icons.vpn_lock,
+                          size: 18,
+                          color: Colors.green,
+                        ),
                       ),
-                    ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      focusNode: focus,
-                      keyboardType: TextInputType.url,
-                      textInputAction: TextInputAction.go,
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      style: const TextStyle(fontSize: 15),
-                      decoration: InputDecoration(
-                        isCollapsed: true,
-                        border: InputBorder.none,
-                        hintText: 'Search or type web address',
-                        hintStyle: TextStyle(color: scheme.onSurfaceVariant),
-                      ),
-                      onSubmitted: onSubmit,
-                    ),
-                  ),
-                  if (!editing && !tab.isNewTab) _ShieldButton(tab: tab),
-                  if (editing)
-                    IconButton(
-                      tooltip: 'Clear',
-                      icon: const Icon(Icons.close, size: 20),
-                      onPressed: controller.clear,
-                    )
-                  else
-                    IconButton(
-                      tooltip: tab.isLoading ? 'Stop' : 'Reload',
-                      icon: Icon(
-                        tab.isLoading ? Icons.close : Icons.refresh,
+                      const SizedBox(width: 6),
+                    ],
+                    if (editing || tab.isNewTab)
+                      Icon(
+                        Icons.search,
                         size: 20,
+                        color: scheme.onSurfaceVariant,
+                      )
+                    else
+                      GestureDetector(
+                        onTap: () => _showSiteInfo(context),
+                        child: Icon(
+                          tab.isSecure
+                              ? Icons.lock_outline
+                              : Icons.info_outline,
+                          size: 18,
+                          color: tab.isSecure
+                              ? scheme.onSurfaceVariant
+                              : scheme.error,
+                        ),
                       ),
-                      onPressed: tab.isLoading ? onStop : onReload,
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: controller,
+                        focusNode: focus,
+                        keyboardType: TextInputType.url,
+                        textInputAction: TextInputAction.go,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        style: const TextStyle(fontSize: 15),
+                        decoration: InputDecoration(
+                          isCollapsed: true,
+                          border: InputBorder.none,
+                          hintText: 'Search or type web address',
+                          hintStyle: TextStyle(color: scheme.onSurfaceVariant),
+                        ),
+                        onSubmitted: onSubmit,
+                      ),
                     ),
-                ],
+                    if (!editing && !tab.isNewTab) _ShieldButton(tab: tab),
+                    if (editing)
+                      IconButton(
+                        tooltip: 'Clear',
+                        icon: const Icon(Icons.close, size: 20),
+                        onPressed: controller.clear,
+                      )
+                    else
+                      IconButton(
+                        tooltip: tab.isLoading ? 'Stop' : 'Reload',
+                        icon: Icon(
+                          tab.isLoading ? Icons.close : Icons.refresh,
+                          size: 20,
+                        ),
+                        onPressed: tab.isLoading ? onStop : onReload,
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -972,6 +1014,31 @@ class _Suggestions extends ConsumerWidget {
                   subtitle: Text('${engine.label} search'),
                   onTap: () => onSearch(q),
                 ),
+              if (q.isNotEmpty)
+                for (final sug
+                    in ref.watch(searchSuggestionsProvider(q)).value ??
+                        const <String>[])
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.search, size: 20),
+                    title: Text(
+                      sug,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () => onSearch(sug),
+                    trailing: IconButton(
+                      tooltip: 'Edit',
+                      icon: const Icon(Icons.north_west, size: 18),
+                      onPressed: () {
+                        final c = listenable as TextEditingController;
+                        c.text = '$sug ';
+                        c.selection = TextSelection.collapsed(
+                          offset: c.text.length,
+                        );
+                      },
+                    ),
+                  ),
               if (q.isEmpty && matches.isEmpty)
                 const Padding(
                   padding: EdgeInsets.all(24),
@@ -1229,6 +1296,85 @@ class _PullIndicator extends ConsumerWidget {
           ),
         );
       },
+    );
+  }
+}
+
+
+/// Shown over private tabs while they're locked.
+class _PrivateLocked extends StatelessWidget {
+  final VoidCallback onUnlock;
+  const _PrivateLocked({required this.onUnlock});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        color: const Color(0xFF1B1036),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock, size: 56, color: Color(0xFFB39DDB)),
+            const SizedBox(height: 16),
+            const Text('Private tabs are locked',
+                style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            const Text('Use your fingerprint, face or screen lock to continue.',
+                textAlign: TextAlign.center, style: TextStyle(color: Colors.white70)),
+            const SizedBox(height: 24),
+            FilledButton.icon(onPressed: onUnlock, icon: const Icon(Icons.fingerprint), label: const Text('Unlock')),
+          ],
+        ),
+      );
+}
+
+
+/// Player controls while an article is being read aloud.
+class _ReadAloudBar extends ConsumerWidget {
+  const _ReadAloudBar();
+
+  static const _rates = [0.75, 1.0, 1.25, 1.5, 2.0];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final st = ref.watch(readAloudProvider);
+    final n = ref.read(readAloudProvider.notifier);
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.secondaryContainer,
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        LinearProgressIndicator(value: st.status == ReadAloudStatus.loading ? null : st.progress, minHeight: 2),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 2, 4, 2),
+          child: Row(children: [
+            const Icon(Icons.record_voice_over, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                st.title.isEmpty ? 'Reading aloud' : st.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            IconButton(tooltip: 'Previous paragraph', icon: const Icon(Icons.skip_previous), onPressed: () => n.skip(-1)),
+            IconButton(
+              tooltip: st.status == ReadAloudStatus.playing ? 'Pause' : 'Play',
+              icon: Icon(st.status == ReadAloudStatus.playing ? Icons.pause : Icons.play_arrow),
+              onPressed: st.status == ReadAloudStatus.playing ? n.pause : n.resume,
+            ),
+            IconButton(tooltip: 'Next paragraph', icon: const Icon(Icons.skip_next), onPressed: () => n.skip(1)),
+            TextButton(
+              onPressed: () {
+                final i = _rates.indexOf(st.rate);
+                n.setRate(_rates[(i + 1) % _rates.length]);
+              },
+              child: Text('${st.rate}×'),
+            ),
+            IconButton(tooltip: 'Stop', icon: const Icon(Icons.close), onPressed: n.stop),
+          ]),
+        ),
+      ]),
     );
   }
 }
