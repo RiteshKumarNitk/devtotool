@@ -1,13 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show DateUtils;
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:screenshot/screenshot.dart';
 
 import 'providers.dart';
+import 'tabs_provider.dart';
 
 Box? _box() => Hive.isBoxOpen(settingsBoxName) ? Hive.box(settingsBoxName) : null;
 
@@ -55,7 +57,10 @@ class CurrentPageNotifier extends Notifier<CurrentPage> {
 final currentPageProvider =
     NotifierProvider<CurrentPageNotifier, CurrentPage>(CurrentPageNotifier.new);
 
-/// Bottom-navigation tab indices.
+/// Root navigator, so non-widget code can switch between browser and dev tools.
+final appNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Screens: [browser] is the browser itself; the rest are Developer-tools tabs.
 abstract final class AppTab {
   static const browser = 0;
   static const console = 1;
@@ -66,20 +71,34 @@ abstract final class AppTab {
   static const more = 6;
 }
 
+/// Selecting [AppTab.browser] closes Developer tools; any other tab opens
+/// Developer tools on that panel.
 class HomeTabNotifier extends Notifier<int> {
+  /// Set by the browser shell: pushes the Developer-tools route.
+  static void Function()? openDevToolsRoute;
+  static bool devToolsOpen = false;
+
   @override
   int build() => AppTab.browser;
-  void select(int index) => state = index;
+
+  void select(int index) {
+    if (index == AppTab.browser) {
+      state = AppTab.browser;
+      appNavigatorKey.currentState?.popUntil((r) => r.isFirst);
+      return;
+    }
+    state = index;
+    if (!devToolsOpen) openDevToolsRoute?.call();
+  }
 }
 
 final homeTabProvider = NotifierProvider<HomeTabNotifier, int>(HomeTabNotifier.new);
 
-/// Opens [url] in the browser tab. Returns false if the WebView isn't ready.
+/// Opens [url] in the current browser tab and shows the browser.
 bool openInBrowser(WidgetRef ref, String url) {
-  final controller = ref.read(webViewControllerProvider);
   final uri = Uri.tryParse(url);
-  if (controller == null || uri == null) return false;
-  controller.loadRequest(uri);
+  if (uri == null || url.isEmpty) return false;
+  ref.read(tabsProvider.notifier).loadUri(uri);
   ref.read(homeTabProvider.notifier).select(AppTab.browser);
   return true;
 }
@@ -174,6 +193,59 @@ class HistoryNotifier extends Notifier<List<Map<String, String>>> {
     state = [];
     _box()?.delete(_key);
   }
+
+  /// Merges visits from a backup (deduplicated, oldest first, capped).
+  int importEntries(List<Map<String, String>> entries) {
+    final key = {for (final e in state) '${e['url']}|${e['time']}'};
+    final added = entries.where((e) => (e['url'] ?? '').isNotEmpty && key.add('${e['url']}|${e['time']}')).toList();
+    final merged = [...state, ...added]..sort((a, b) => (a['time'] ?? '').compareTo(b['time'] ?? ''));
+    state = merged.length > maxHistoryEntries ? merged.sublist(merged.length - maxHistoryEntries) : merged;
+    _box()?.put(_key, state);
+    return added.length;
+  }
+
+  /// Deletes one visit (matched by URL and time).
+  void remove(Map<String, String> entry) {
+    state = state.where((e) => !(e['url'] == entry['url'] && e['time'] == entry['time'])).toList();
+    _box()?.put(_key, state);
+  }
+
+  /// Deletes visits on or after [since] ("last hour", "today").
+  void clearSince(DateTime since) {
+    state = state.where((e) {
+      final t = DateTime.tryParse(e['time'] ?? '');
+      return t != null && t.isBefore(since);
+    }).toList();
+    _box()?.put(_key, state);
+  }
+}
+
+/// Groups history (newest first) under "Today", "Yesterday" or a date label.
+List<(String, List<Map<String, String>>)> groupHistoryByDay(
+  List<Map<String, String>> entries, {
+  DateTime? now,
+  String Function(DateTime day)? formatDay,
+}) {
+  final today = DateUtils.dateOnly(now ?? DateTime.now());
+  final groups = <(String, List<Map<String, String>>)>[];
+  String? currentLabel;
+  for (final e in entries.reversed) {
+    final t = DateTime.tryParse(e['time'] ?? '')?.toLocal();
+    final day = t == null ? null : DateUtils.dateOnly(t);
+    final diff = day == null ? null : today.difference(day).inDays;
+    final label = switch (diff) {
+      null => 'Earlier',
+      0 => 'Today',
+      1 => 'Yesterday',
+      _ => formatDay?.call(day!) ?? '${day!.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}',
+    };
+    if (label != currentLabel) {
+      groups.add((label, []));
+      currentLabel = label;
+    }
+    groups.last.$2.add(e);
+  }
+  return groups;
 }
 
 final historyProvider =

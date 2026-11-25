@@ -5,7 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'core/theme/app_theme.dart';
 import 'core/providers.dart';
+import 'core/tool_providers.dart';
+import 'branding/splash_page.dart';
 import 'features/browser/home_page.dart';
+import 'features/onboarding/onboarding_page.dart';
 
 Future<void> main() async {
   runZonedGuarded(() async {
@@ -42,13 +45,17 @@ class DebugBrowserApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeProvider);
+    final seed = Color(ref.watch(accentColorProvider));
 
     return MaterialApp(
       title: 'Debug Browser',
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
+      theme: AppTheme.build(Brightness.light, seed: seed),
+      darkTheme: AppTheme.build(Brightness.dark, seed: seed),
+      themeAnimationDuration: const Duration(milliseconds: 350),
+      themeAnimationCurve: Curves.easeOutCubic,
       themeMode: themeMode,
-      home: const HomePage(),
+      navigatorKey: appNavigatorKey,
+      home: const SplashPage(next: FirstRunGate(child: HomePage())),
       debugShowCheckedModeBanner: false,
     );
   }

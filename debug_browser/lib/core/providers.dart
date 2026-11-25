@@ -133,14 +133,52 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
   @override
   ThemeMode build() {
     final saved = _settingsBoxOrNull()?.get(_key) as String?;
-    return saved == 'light' ? ThemeMode.light : ThemeMode.dark;
+    return switch (saved) {
+      'light' => ThemeMode.light,
+      'dark' => ThemeMode.dark,
+      _ => ThemeMode.system, // follow the phone by default
+    };
   }
 
-  void toggle() {
-    state = state == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
-    _settingsBoxOrNull()?.put(_key, state == ThemeMode.light ? 'light' : 'dark');
+  void set(ThemeMode mode) {
+    state = mode;
+    _settingsBoxOrNull()?.put(_key, mode.name);
+  }
+
+  /// Flips between light and dark (from whatever is showing now).
+  void toggle({Brightness? current}) {
+    final dark = state == ThemeMode.dark || (state == ThemeMode.system && current == Brightness.dark);
+    set(dark ? ThemeMode.light : ThemeMode.dark);
   }
 }
+
+/// Accent colours offered in Settings (seed for the Material 3 scheme).
+const accentColors = <String, int>{
+  'Blue': 0xFF1A73E8,
+  'Teal': 0xFF00897B,
+  'Purple': 0xFF7E57C2,
+  'Orange': 0xFFF4511E,
+  'Pink': 0xFFD81B60,
+  'Green': 0xFF43A047,
+};
+
+class AccentColorNotifier extends Notifier<int> {
+  static const _key = 'accentColor';
+
+  @override
+  int build() {
+    final v = _settingsBoxOrNull()?.get(_key);
+    return v is int && accentColors.containsValue(v) ? v : accentColors['Blue']!;
+  }
+
+  void set(int color) {
+    if (!accentColors.containsValue(color)) return;
+    state = color;
+    _settingsBoxOrNull()?.put(_key, color);
+  }
+}
+
+final accentColorProvider = NotifierProvider<AccentColorNotifier, int>(AccentColorNotifier.new);
 
 final themeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(ThemeModeNotifier.new);
 
@@ -363,11 +401,48 @@ class BookmarksNotifier extends Notifier<List<Map<String, String>>> {
   }
 
   /// Adds a bookmark; returns false if the URL is already bookmarked.
-  bool addBookmark(String title, String url) {
+  bool addBookmark(String title, String url, {String? folder}) {
     if (state.any((b) => b['url'] == url)) return false;
-    state = [...state, {'title': title, 'url': url}];
+    state = [
+      ...state,
+      {'title': title, 'url': url, if (folder != null && folder.trim().isNotEmpty) 'folder': folder.trim()},
+    ];
     _persist();
     return true;
+  }
+
+  /// Folder names in use (bookmarks without a folder are at the top level).
+  List<String> get folders => <String>{
+        for (final b in state)
+          if ((b['folder'] ?? '').isNotEmpty) b['folder']!,
+      }.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+  void moveToFolder(String url, String? folder) {
+    final f = folder?.trim() ?? '';
+    state = [
+      for (final b in state)
+        if (b['url'] == url) ({...b}..remove('folder')..addAll(f.isEmpty ? {} : {'folder': f})) else b,
+    ];
+    _persist();
+  }
+
+  void renameBookmark(String url, String title) {
+    state = [for (final b in state) b['url'] == url ? {...b, 'title': title.trim()} : b];
+    _persist();
+  }
+
+  void renameFolder(String from, String to) {
+    final name = to.trim();
+    if (name.isEmpty) return;
+    state = [for (final b in state) b['folder'] == from ? {...b, 'folder': name} : b];
+    _persist();
+  }
+
+  /// Removes the folder; its bookmarks move to the top level.
+  void deleteFolder(String folder) {
+    state = [for (final b in state) b['folder'] == folder ? ({...b}..remove('folder')) : b];
+    _persist();
   }
 
   void removeBookmark(String url) {

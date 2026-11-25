@@ -1,6 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/providers.dart';
 import '../../core/tool_providers.dart';
+
+const userAgentPresets = {
+  'Default (this device)': 'default',
+  'iPhone (Safari)':
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+  'Android (Chrome)':
+      'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
+  'Desktop Chrome':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  'Googlebot': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+};
 
 class EmulationPage extends ConsumerStatefulWidget {
   const EmulationPage({super.key});
@@ -116,11 +128,25 @@ class _EmulationPageState extends ConsumerState<EmulationPage> {
               padding: const EdgeInsets.only(top: 6),
               child: Text(_geoError!, style: TextStyle(color: theme.colorScheme.error, fontSize: 12)),
             ),
-          const SizedBox(height: 16),
-          const Text(
-            'User-Agent presets are in the browser menu (⋮). Network throttling is in the Network tab.',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
+          const Divider(height: 32),
+          Text('User-Agent', style: theme.textTheme.titleMedium),
+          const Padding(
+            padding: EdgeInsets.only(top: 4, bottom: 8),
+            child: Text('Applies to all tabs and reloads the page. "Desktop site" in the browser menu is a shortcut.',
+                style: TextStyle(fontSize: 12, color: Colors.grey)),
           ),
+          for (final e in userAgentPresets.entries)
+            ListTile(
+              dense: true,
+              selected: ref.watch(userAgentProvider) == e.value,
+              leading: Icon(ref.watch(userAgentProvider) == e.value ? Icons.radio_button_checked : Icons.radio_button_unchecked),
+              title: Text(e.key),
+              subtitle: e.value == 'default' ? null : Text(e.value, maxLines: 1, overflow: TextOverflow.ellipsis),
+              onTap: () => ref.read(userAgentProvider.notifier).setAgent(e.value),
+            ),
+          const SizedBox(height: 8),
+          const Text('Network throttling is in Developer tools → Network.',
+              style: TextStyle(fontSize: 12, color: Colors.grey)),
         ],
       ),
     );

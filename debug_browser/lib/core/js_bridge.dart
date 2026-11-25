@@ -119,14 +119,70 @@ BridgeMessage? parseBridgeMessage(String raw) {
     case 'vitals':
     case 'dom_tree':
     case 'a11y':
+    case 'find_result':
+    case 'element_picked':
+    case 'highlight_added':
+    case 'highlight_tap':
+    case 'page_audit':
+    case 'replay_result':
       return PageDataMessage(type as String, map);
+    case 'ui':
+      final kind = map['kind'];
+      if (kind != 'scroll' && kind != 'pull') return null;
+      return UiEventMessage(kind as String, map);
+    case 'blocked':
+      final n = map['n'];
+      final domains = map['domains'];
+      if (n is! num) return null;
+      return BlockedMessage(n.toInt(), {
+        if (domains is Map)
+          for (final e in domains.entries)
+            if (e.value is num) '${e.key}': (e.value as num).toInt(),
+      });
+    case 'blob_download':
+      final data = map['href'];
+      if (data is! String || !data.startsWith('data:')) return null;
+      return BrowserActionMessage(type as String, map);
+    case 'open_tab':
+    case 'link_menu':
+    case 'download_link':
+    case 'popup_blocked':
+    case 'favicon':
+      final href = map['href'];
+      // Only web links may open tabs from page content.
+      if (href is! String || !(href.startsWith('http://') || href.startsWith('https://'))) return null;
+      return BrowserActionMessage(type as String, map);
   }
   return null;
 }
 
+/// Browser-UI signals from the page: 'scroll' {dir: down|up|top} and
+/// 'pull' {state: move|release|cancel, d: pixels}.
+class UiEventMessage extends BridgeMessage {
+  final String kind;
+  final Map<String, dynamic> data;
+  const UiEventMessage(this.kind, this.data);
+}
+
+/// The extension blocker stopped [count] requests (delta since last report).
+class BlockedMessage extends BridgeMessage {
+  final int count;
+  final Map<String, int> domains;
+  const BlockedMessage(this.count, this.domains);
+}
+
+/// Page-initiated browser actions: 'open_tab' (target=_blank / window.open)
+/// and 'link_menu' (long-press on a link or image).
+class BrowserActionMessage extends BridgeMessage {
+  final String kind;
+  final Map<String, dynamic> data;
+  const BrowserActionMessage(this.kind, this.data);
+  String get href => data['href'] as String;
+}
+
 /// Normalises user input from the address bar into a loadable URI.
-/// Bare words become a search query.
-Uri normaliseUrlInput(String input) {
+/// Bare words become a query for [search] (Google by default).
+Uri normaliseUrlInput(String input, {Uri Function(String query)? search}) {
   final text = input.trim();
   if (text.isEmpty) return Uri.parse('about:blank');
   final hasScheme = RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(text) ||
@@ -140,5 +196,5 @@ Uri normaliseUrlInput(String input) {
         RegExp(r'^(\d{1,3}\.){3}\d{1,3}').hasMatch(text);
     return Uri.parse('${isLocal ? 'http' : 'https'}://$text');
   }
-  return Uri.https('www.google.com', '/search', {'q': text});
+  return search?.call(text) ?? Uri.https('www.google.com', '/search', {'q': text});
 }
