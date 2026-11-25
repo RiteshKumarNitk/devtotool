@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/home_stats.dart';
 import '../core/tabs_provider.dart';
 import 'logo_painter.dart';
 
@@ -21,6 +22,10 @@ class SplashPage extends ConsumerStatefulWidget {
 
 class _SplashPageState extends ConsumerState<SplashPage> with SingleTickerProviderStateMixin {
   static const _duration = Duration(milliseconds: 1650);
+
+  /// After the first run the same animation plays about twice as fast, so
+  /// opening the browser (or a link from another app) isn't slowed down.
+  static const _quickDuration = Duration(milliseconds: 850);
   late final AnimationController _c = AnimationController(vsync: this, duration: _duration);
   bool _leaving = false;
 
@@ -40,13 +45,16 @@ class _SplashPageState extends ConsumerState<SplashPage> with SingleTickerProvid
   void initState() {
     super.initState();
     if (widget.prewarm) ref.read(tabsProvider);
+    final quick = ref.read(onboardedProvider);
+    if (quick) _c.duration = _quickDuration;
+    final hold = Duration(milliseconds: quick ? 80 : 250);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (MediaQuery.of(context).disableAnimations) {
         _c.value = 1;
         Future.delayed(const Duration(milliseconds: 250), _finish);
       } else {
-        _c.forward().whenComplete(() => Future.delayed(const Duration(milliseconds: 250), _finish));
+        _c.forward().whenComplete(() => Future.delayed(hold, _finish));
       }
     });
   }

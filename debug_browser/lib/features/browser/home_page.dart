@@ -40,6 +40,10 @@ class HomePage extends ConsumerStatefulWidget {
 
 class _HomePageState extends ConsumerState<HomePage>
     with WidgetsBindingObserver {
+  /// Android asked apps to free memory: unload background tabs.
+  @override
+  void didHaveMemoryPressure() => ref.read(tabsProvider.notifier).trimMemory();
+
   // ------------------------------------------------------- private tab lock
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -1143,7 +1147,10 @@ class _AddressBar extends ConsumerWidget {
           SizedBox(
             height: 2,
             child: tab.isLoading
-                ? LinearProgressIndicator(value: tab.progress, minHeight: 2)
+                ? ValueListenableBuilder<double>(
+                    valueListenable: ref.read(tabsProvider.notifier).loadProgress,
+                    builder: (_, p, _) => LinearProgressIndicator(value: p, minHeight: 2),
+                  )
                 : null,
           ),
         ],

@@ -27,6 +27,8 @@ class ExportService {
   /// Returns false on failure.
   static Future<bool> exportSession(WidgetRef ref) async {
     try {
+      ref.read(consoleLogsProvider.notifier).flush();
+      ref.read(networkRequestsProvider.notifier).flush();
       final session = buildSession(
         logs: ref.read(consoleLogsProvider),
         network: ref.read(networkRequestsProvider),

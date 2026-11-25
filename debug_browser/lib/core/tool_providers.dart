@@ -392,6 +392,8 @@ class SessionStore {
 
   static Future<File> save(WidgetRef ref, String name) async {
     final dir = await _dir();
+    ref.read(consoleLogsProvider.notifier).flush();
+    ref.read(networkRequestsProvider.notifier).flush();
     final now = DateTime.now();
     final data = {
       'format': 'debug-browser-session',

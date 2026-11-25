@@ -25,6 +25,10 @@ import 'tool_providers.dart';
 
 const int maxTabs = 30;
 
+/// Background tabs kept loaded (most recently used first). Older ones are
+/// unloaded to save memory and reload when opened, like Chrome's tab discarding.
+const int maxLiveTabs = 5;
+
 @immutable
 class BrowserTab {
   final String id;
@@ -294,6 +298,17 @@ class TabsNotifier extends Notifier<TabsState> {
     if (frozen) toolbarsVisible.value = true;
   }
 
+  /// Loading progress (0..1) of the active tab. Kept out of [state] so the
+  /// many progress steps of a page load redraw only the progress bar, not
+  /// the whole browser screen.
+  final loadProgress = ValueNotifier<double>(0);
+  final Map<String, double> _progress = {};
+
+  void _setProgress(String id, double v) {
+    _progress[id] = v;
+    if (id == state.activeId) loadProgress.value = v;
+  }
+
   /// Pull to refresh: current pull distance in px, or null when not pulling.
   final pullDistance = ValueNotifier<double?>(null);
   static const double pullTrigger = 110;
@@ -422,6 +437,8 @@ class TabsNotifier extends Notifier<TabsState> {
     _controllers.remove(id)?.loadRequest(Uri.parse('about:blank'));
     _sdkActive.remove(id);
     _pendingNav.remove(id);
+    _progress.remove(id);
+    _recent.remove(id);
     _awaitingProfile.remove(id);
     ref.read(tabThumbnailsProvider.notifier).remove(id);
     _extReady.remove(id);
@@ -461,6 +478,42 @@ class TabsNotifier extends Notifier<TabsState> {
     _persist();
     return true;
   }
+
+  /// Unloads loaded background tabs beyond the [keep] most recently used.
+  /// Private tabs are never unloaded (their data would be lost).
+  void _unloadIdleTabs({int keep = maxLiveTabs}) {
+    if (!ref.mounted) return;
+    final ordered = [
+      ..._recent.where((id) => _tab(id) != null),
+      ...state.tabs.map((t) => t.id).where((id) => !_recent.contains(id)),
+    ];
+    var kept = 0;
+    for (final id in ordered) {
+      final t = _tab(id);
+      if (t == null || id == state.activeId) continue;
+      if (!t.loaded || t.isPrivate || t.isNewTab) continue;
+      if (kept < keep) {
+        kept++;
+        continue;
+      }
+      _unload(id);
+    }
+  }
+
+  /// Frees a background tab's page; it reloads when activated again.
+  void _unload(String id) {
+    final old = _controllers[id];
+    if (old == null) return;
+    _controllers[id] = _createController(id); // old one's callbacks go quiet
+    old.loadRequest(Uri.parse('about:blank')).catchError((Object _) {});
+    _sdkActive.remove(id);
+    _pendingNav.remove(id);
+    _progress.remove(id);
+    _patch(id, (t) => t.copyWith(loaded: false, isLoading: false, canGoBack: false, canGoForward: false));
+  }
+
+  /// Android is low on memory: keep only the tab on screen loaded.
+  void trimMemory() => _unloadIdleTabs(keep: 0);
 
   /// Called before the app exits from the Back prompt.
   Future<void> prepareForExit() async {
@@ -514,14 +567,22 @@ class TabsNotifier extends Notifier<TabsState> {
     _persist();
   }
 
+  /// Tab ids, most recently shown first (for unloading idle tabs).
+  final List<String> _recent = [];
+
   void _onActivated(String id) {
+    _recent
+      ..remove(id)
+      ..insert(0, id);
+    Future.microtask(_unloadIdleTabs);
+    final tab = _tab(id);
+    loadProgress.value = _progress[id] ?? (tab != null && tab.isLoading ? 0.05 : 1);
     toolbarsVisible.value = true;
     pullDistance.value = null;
     // Dev tools follow the active tab.
     ref.read(webViewControllerProvider.notifier).setController(_controllers[id]!);
     ref.read(pageDataProvider.notifier).clear();
     ref.read(domTreeProvider.notifier).setTree({});
-    final tab = _tab(id);
     if (tab != null) ref.read(currentPageProvider.notifier).set(tab.url, tab.title);
     _ensureLoaded(id);
   }
@@ -771,13 +832,20 @@ class TabsNotifier extends Notifier<TabsState> {
   }
 
   WebViewController _createController(String id) {
-    final c = WebViewController()
+    late final WebViewController c;
+    // Callbacks from a controller that was replaced (tab unloaded or
+    // closed) must not touch the tab any more.
+    bool live() => identical(_controllers[id], c);
+    c = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0x00000000))
       ..setNavigationDelegate(NavigationDelegate(
-        onNavigationRequest: (req) => _onNavigationRequest(id, req),
-        onProgress: (p) => _patch(id, (t) => t.copyWith(progress: p / 100.0)),
+        onNavigationRequest: (req) => live() ? _onNavigationRequest(id, req) : NavigationDecision.prevent,
+        onProgress: (p) {
+          if (live()) _setProgress(id, p / 100.0);
+        },
         onUrlChange: (change) {
+          if (!live()) return;
           final url = change.url;
           if (url == null) return;
           if (_tab(id)?.isNewTab == true) {
@@ -787,11 +855,13 @@ class TabsNotifier extends Notifier<TabsState> {
           }
         },
         onPageStarted: (url) {
+          if (!live()) return;
           _sdkActive.remove(id);
           _pendingNav[id]?.clear();
           _patch(id, (t) => t.copyWith(blockedCount: 0, blockedDomains: const {}));
           _applyTextZoom(id, url);
           if (_tab(id)?.isNewTab == true) return;
+          _setProgress(id, 0.05);
           _patch(id, (t) => t.copyWith(url: url, isLoading: true, progress: 0.05, error: () => null));
           if (id == state.activeId) toolbarsVisible.value = true;
           if (id == state.activeId) {
@@ -799,10 +869,18 @@ class TabsNotifier extends Notifier<TabsState> {
             ref.read(domTreeProvider.notifier).setTree({});
           }
         },
-        onPageFinished: (url) => _onPageFinished(id, url),
-        onHttpAuthRequest: (req) => _onHttpAuth(id, req),
+        onPageFinished: (url) {
+          if (live()) _onPageFinished(id, url);
+        },
+        onHttpAuthRequest: (req) {
+          if (live()) {
+            _onHttpAuth(id, req);
+          } else {
+            req.onCancel();
+          }
+        },
         onWebResourceError: (e) {
-          if (e.isForMainFrame != true) return;
+          if (!live() || e.isForMainFrame != true) return;
           // -999/cancelled navigations aren't real errors.
           if (e.errorType == WebResourceErrorType.unknown && e.description.toLowerCase().contains('cancel')) return;
           final httpUrl = _upgradedFrom.remove(id);
@@ -820,8 +898,11 @@ class TabsNotifier extends Notifier<TabsState> {
           }
         },
       ))
-      ..addJavaScriptChannel('DebugBridge', onMessageReceived: (m) => _onBridgeMessage(id, m.message))
+      ..addJavaScriptChannel('DebugBridge', onMessageReceived: (m) {
+        if (live()) _onBridgeMessage(id, m.message);
+      })
       ..setOnConsoleMessage((msg) {
+        if (!live()) return;
         // Native console is only a fallback before the SDK hooks console.*.
         if (_sdkActive.contains(id) || id != state.activeId) return;
         final level = switch (msg.level) {
@@ -1098,6 +1179,7 @@ class TabsNotifier extends Notifier<TabsState> {
     if (_tab(id)?.isNewTab == true) {
       _patch(id, (t) => t.copyWith(lastWebUrl: () => url, lastWebTitle: () => title, canGoBack: back, canGoForward: fwd));
     } else {
+      _setProgress(id, 1);
       _patch(id, (t) => t.copyWith(
             url: url,
             title: title,

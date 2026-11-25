@@ -1,10 +1,17 @@
 import 'package:debug_browser/branding/logo_painter.dart';
 import 'package:debug_browser/branding/splash_page.dart';
+import 'package:debug_browser/core/home_stats.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Widget app({bool reduceMotion = false}) => ProviderScope(
+class _Onboarded extends OnboardedNotifier {
+  @override
+  bool build() => true;
+}
+
+Widget app({bool reduceMotion = false, bool returning = false}) => ProviderScope(
+      overrides: [if (returning) onboardedProvider.overrideWith(_Onboarded.new)],
       child: MaterialApp(
         home: Builder(
           builder: (context) => MediaQuery(
@@ -56,6 +63,16 @@ void main() {
     await t.pump();
     expect(painter(t).outline, 1);
     await t.pump(const Duration(milliseconds: 300));
+    await t.pumpAndSettle();
+    expect(find.text('HOME'), findsOneWidget);
+  });
+
+  testWidgets('returning users get a quicker splash', (t) async {
+    await t.pumpWidget(app(returning: true));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 900));
+    expect(painter(t).badge, closeTo(1, 0.05), reason: 'whole animation in under a second');
+    await t.pump(const Duration(milliseconds: 100));
     await t.pumpAndSettle();
     expect(find.text('HOME'), findsOneWidget);
   });

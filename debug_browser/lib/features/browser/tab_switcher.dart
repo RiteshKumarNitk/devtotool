@@ -465,6 +465,8 @@ class _TabSwitcherPageState extends ConsumerState<TabSwitcherPage> {
                                         alignment: Alignment.topCenter,
                                         gaplessPlayback: true,
                                         filterQuality: FilterQuality.medium,
+                                      // Decode at card size, not full size.
+                                      cacheWidth: 400,
                                       )
                                     : Container(
                                         color: scheme.surface,

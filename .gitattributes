@@ -1,0 +1,18 @@
+# Normalise line endings: LF in the repository, native in the working copy.
+* text=auto
+
+# Scripts that must keep LF / CRLF everywhere.
+*.sh text eol=lf
+gradlew text eol=lf
+*.bat text eol=crlf
+
+# Binary files.
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary
+*.jar binary
+*.keystore binary
+*.jks binary
+*.ttf binary
+*.otf binary

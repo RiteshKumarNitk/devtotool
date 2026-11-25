@@ -51,6 +51,8 @@ class _AuditPageState extends ConsumerState<AuditPage> {
       return;
     }
     final data = ref.read(pageDataProvider);
+    ref.read(consoleLogsProvider.notifier).flush();
+    ref.read(networkRequestsProvider.notifier).flush();
     final errors = ref.read(consoleLogsProvider).where((l) => l.level == 'error').length;
     setState(() {
       _running = false;

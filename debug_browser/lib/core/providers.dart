@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -80,24 +82,83 @@ List<T> appendCapped<T>(List<T> list, T item, int max) {
   return next.length > max ? next.sublist(next.length - max) : next;
 }
 
-// --- Notifiers ---
-class ConsoleLogsNotifier extends Notifier<List<ConsoleLog>> {
-  @override
-  List<ConsoleLog> build() => [];
-
-  void addLog(ConsoleLog log) => state = appendCapped(state, log, maxConsoleLogs);
-
-  void clear() => state = [];
+/// Appends many [items] keeping at most [max] newest entries (one copy).
+List<T> appendAllCapped<T>(List<T> list, List<T> items, int max) {
+  if (items.length >= max) return items.sublist(items.length - max);
+  final drop = (list.length + items.length - max).clamp(0, list.length);
+  return [...list.skip(drop), ...items];
 }
 
-class NetworkRequestsNotifier extends Notifier<List<NetworkRequest>> {
+/// Collects entries and publishes them together at most every 100 ms, so a
+/// page that logs hundreds of lines a second costs a few list copies and
+/// redraws instead of one per line.
+mixin _BatchedAppend<T> on Notifier<List<T>> {
+  final List<T> _buffer = [];
+  Timer? _flushTimer;
+  int get _max;
+
+  void _queue(T item, {bool now = false}) {
+    _buffer.add(item);
+    if (now) return _flush();
+    _flushTimer ??= Timer(const Duration(milliseconds: 100), _flush);
+  }
+
+  void _flush() {
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    if (_buffer.isEmpty || !ref.mounted) return;
+    state = appendAllCapped(state, [..._buffer], _max);
+    _buffer.clear();
+  }
+
+  void _drop() {
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _buffer.clear();
+  }
+}
+
+// --- Notifiers ---
+class ConsoleLogsNotifier extends Notifier<List<ConsoleLog>> with _BatchedAppend<ConsoleLog> {
   @override
-  List<NetworkRequest> build() => [];
+  int get _max => maxConsoleLogs;
 
-  void addRequest(NetworkRequest req) =>
-      state = appendCapped(state, req, maxNetworkRequests);
+  @override
+  List<ConsoleLog> build() {
+    ref.onDispose(_drop);
+    return [];
+  }
 
-  void clear() => state = [];
+  /// REPL input and results show at once; page logs are batched.
+  void addLog(ConsoleLog log) => _queue(log, now: log.level == 'input' || log.level == 'result');
+
+  /// Publishes anything still waiting (tests, exports).
+  void flush() => _flush();
+
+  void clear() {
+    _drop();
+    state = [];
+  }
+}
+
+class NetworkRequestsNotifier extends Notifier<List<NetworkRequest>> with _BatchedAppend<NetworkRequest> {
+  @override
+  int get _max => maxNetworkRequests;
+
+  @override
+  List<NetworkRequest> build() {
+    ref.onDispose(_drop);
+    return [];
+  }
+
+  void addRequest(NetworkRequest req) => _queue(req);
+
+  void flush() => _flush();
+
+  void clear() {
+    _drop();
+    state = [];
+  }
 }
 
 class StorageStateNotifier extends Notifier<Map<String, dynamic>> {

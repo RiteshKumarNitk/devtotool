@@ -96,6 +96,14 @@ flutter run
    This file is git-ignored. Without it, release builds fall back to debug signing.
 3. Build: `flutter build appbundle --release`.
 
+## Performance
+
+- **Memory:** only the 5 most recently used tabs keep a live page; older background tabs are unloaded and reload (from their saved address) when opened, like Chrome's tab discarding. Private tabs are never unloaded. On Android low-memory warnings every background tab is unloaded. Tab previews are decoded at card size.
+- **Smooth loading:** page-load progress updates only the progress bar, not the whole browser screen.
+- **Busy pages:** console lines and network requests are published in batches (at most every 100 ms); REPL input and results show immediately.
+- **Start-up:** the full splash animation plays on the first run; afterwards it runs in under a second (tap skips it).
+- **Download size:** upload the App Bundle (`flutter build appbundle`); Play then serves each phone only its own CPU code. For side-loading tests use `flutter build apk --split-per-abi` (pick `app-arm64-v8a-release.apk` for modern phones).
+
 ## Known limitations
 
 - Logs written before the page finishes loading are captured only through the native console fallback, not the SDK.

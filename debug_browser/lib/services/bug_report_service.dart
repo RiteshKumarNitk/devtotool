@@ -101,6 +101,8 @@ class BugReportService {
   /// Captures a screenshot and shares report.md + screenshot.png + network.har.
   static Future<bool> shareReport(WidgetRef ref, String description) async {
     try {
+      ref.read(consoleLogsProvider.notifier).flush();
+      ref.read(networkRequestsProvider.notifier).flush();
       final dir = await getTemporaryDirectory();
       final stamp = DateTime.now().millisecondsSinceEpoch;
       final files = <XFile>[];
