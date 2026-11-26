@@ -422,6 +422,15 @@ class SettingsPage extends ConsumerWidget {
           ),
           ]),
           section('About', Colors.blueGrey, [
+          ListTile(
+            leading: const _Badge(Icons.policy_outlined),
+            title: const Text('Privacy policy & terms'),
+            subtitle: const Text('innovatex-technology.com'),
+            onTap: () {
+              Navigator.of(context).popUntil((r) => r.isFirst);
+              ref.read(tabsProvider.notifier).newTab(url: privacyPolicyUrl);
+            },
+          ),
           const AboutListTile(
             icon: _Badge(Icons.info_outline),
             applicationIcon: ClipRRect(
@@ -447,6 +456,9 @@ class SettingsPage extends ConsumerWidget {
 
 
 /// Colour of the icon badges in one settings section.
+/// Hosted on the company website; also given to the Play Console.
+const privacyPolicyUrl = 'https://innovatex-technology.com/apps/debug-browser/privacy';
+
 class _SectionColor extends InheritedWidget {
   final Color color;
   const _SectionColor({required this.color, required super.child});
